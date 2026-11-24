@@ -1,0 +1,1397 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ContactsHub — Plateforme Complète de Centralisation Email</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">@</div>
+        <div>
+          <div class="brand-name">ContactsHub</div>
+          <div class="brand-sub">CRM & Centralisation Email</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-tab="contacts">
+          <span class="nav-icon">👥</span>
+          <span>Contacts</span>
+          <span class="nav-badge" id="navTotalBadge">0</span>
+        </button>
+        <button class="nav-item" data-tab="crm">
+          <span class="nav-icon">📌</span>
+          <span>Pipeline & CRM</span>
+        </button>
+        <button class="nav-item" data-tab="conversion">
+          <span class="nav-icon">🔥</span>
+          <span>Conversion & WhatsApp</span>
+        </button>
+        <button class="nav-item" data-tab="training-forms">
+          <span class="nav-icon">🎓</span>
+          <span>Formulaires Formation</span>
+        </button>
+        <button class="nav-item" data-tab="dashboard">
+          <span class="nav-icon">📊</span>
+          <span>Tableau de bord</span>
+        </button>
+        <button class="nav-item" data-tab="quality">
+          <span class="nav-icon">✨</span>
+          <span>Qualité & Nettoyage</span>
+        </button>
+        <button class="nav-item" data-tab="gdrive">
+          <span class="nav-icon">☁️</span>
+          <span>Google Drive</span>
+        </button>
+        <button class="nav-item" data-tab="local">
+          <span class="nav-icon">💻</span>
+          <span>Ordinateur (PC)</span>
+        </button>
+        <button class="nav-item" data-tab="connectors">
+          <span class="nav-icon">🔌</span>
+          <span>Connecteurs & OCR</span>
+        </button>
+        <button class="nav-item" data-tab="emailing">
+          <span class="nav-icon">✉️</span>
+          <span>Emailing & Modèles</span>
+        </button>
+        <button class="nav-item" data-tab="history">
+          <span class="nav-icon">🕘</span>
+          <span>Historique</span>
+        </button>
+        <button class="nav-item" data-tab="admin">
+          <span class="nav-icon">⚙️</span>
+          <span>Admin & Sécurité</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="status-pill" id="driveStatusPill">
+          <span class="dot"></span>
+          <span>Vérification Drive…</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main">
+      <!-- TAB 1: CONTACTS -->
+      <section class="tab-panel active" id="tab-contacts">
+        <header class="page-header">
+          <div>
+            <h1>Tous vos contacts email</h1>
+            <p class="subtitle">Base centralisée avec statuts CRM, classification Pro/Perso, vérification MX et dédoublonnage.</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn btn-secondary" id="copyEmailsBtn" title="Copier les emails éligibles (hors désinscrits)">📋 Copier emails</button>
+            <div class="dropdown">
+              <button class="btn btn-secondary" id="exportMenuBtn">⬇ Exporter ▾</button>
+              <div class="dropdown-menu" id="exportMenu">
+                <a href="#" data-export="csv">CSV standard (.csv)</a>
+                <a href="#" data-export="xlsx">Excel (.xlsx)</a>
+                <a href="#" data-export="vcf">vCard (.vcf)</a>
+                <div class="dropdown-divider"></div>
+                <a href="#" data-export="google_contacts">Google Contacts (.csv)</a>
+                <a href="#" data-export="brevo">Brevo / Sendinblue (.csv)</a>
+                <a href="#" data-export="mailchimp">Mailchimp (.csv)</a>
+              </div>
+            </div>
+            <button class="btn btn-primary" id="openAddModalBtn">+ Nouveau contact</button>
+          </div>
+        </header>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total contacts</div>
+            <div class="stat-value" id="statTotal">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Emails Pro</div>
+            <div class="stat-value" id="statPro">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Depuis Google Drive</div>
+            <div class="stat-value" id="statGdrive">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Depuis Ordinateur</div>
+            <div class="stat-value" id="statLocal">0</div>
+          </div>
+        </div>
+
+        <!-- Smart Natural Language Search -->
+        <div class="card smart-search-card">
+          <div class="smart-search-row">
+            <span class="smart-icon">✨</span>
+            <input type="text" id="nlSearchInput" class="input search-input" placeholder="Recherche intelligente : ex. « emails pro valides avec téléphone score > 60 » ou « clients en France »…" />
+            <button class="btn btn-primary" id="nlSearchBtn">Rechercher</button>
+          </div>
+          <div class="smart-chips">
+            <button class="chip-btn" data-nl="meilleurs leads pro avec téléphone">🔥 Meilleurs leads pro + tél</button>
+            <button class="chip-btn" data-nl="emails pro jamais contactés">💼 Pro jamais contactés</button>
+            <button class="chip-btn" data-nl="emails pro en France">🇫🇷 Pro en France</button>
+            <button class="chip-btn" data-nl="emails pro en Côte d'Ivoire">🇨🇮 Pro Côte d'Ivoire</button>
+            <button class="chip-btn" data-nl="emails génériques">🤖 Génériques</button>
+          </div>
+          <div id="nlBadges" class="nl-badges hidden"></div>
+        </div>
+
+        <!-- Filters -->
+        <div class="toolbar card">
+          <input type="text" id="searchInput" class="input search-input" placeholder="Filtrer par mot-clé (email, nom, entreprise, secteur, tag)…" />
+          <select id="sortBy" class="select">
+            <option value="score_desc">Tri : Meilleur score</option>
+            <option value="updated_desc">Tri : Plus récents</option>
+            <option value="name_asc">Tri : Nom A→Z</option>
+          </select>
+          <select id="filterMinScore" class="select">
+            <option value="0">Score : Tous</option>
+            <option value="70">Score ≥ 70 (Chaud)</option>
+            <option value="50">Score ≥ 50 (Qualifié)</option>
+            <option value="30">Score ≥ 30</option>
+          </select>
+          <select id="filterCountry" class="select">
+            <option value="">Tous les pays</option>
+          </select>
+          <select id="filterStatus" class="select">
+            <option value="">Tous les statuts</option>
+            <option value="new">Nouveau</option>
+            <option value="contacted">Contacté</option>
+            <option value="client">Client</option>
+            <option value="followup">À relancer</option>
+            <option value="unsubscribed">Ne plus contacter</option>
+          </select>
+          <select id="filterEmailType" class="select">
+            <option value="">Pro / Perso / Générique</option>
+            <option value="pro">Professionnel</option>
+            <option value="perso">Personnel (Gmail, etc.)</option>
+            <option value="generic">Générique (info@, noreply@)</option>
+          </select>
+          <select id="filterMx" class="select">
+            <option value="">MX : Tous</option>
+            <option value="valid">MX Valide</option>
+            <option value="invalid">MX Invalide</option>
+            <option value="unchecked">Non vérifié</option>
+          </select>
+          <select id="filterSource" class="select">
+            <option value="">Toutes les sources</option>
+            <option value="gdrive">Google Drive</option>
+            <option value="pc">Ordinateur (PC)</option>
+            <option value="upload">Upload direct</option>
+            <option value="imap">Boîte Email (IMAP)</option>
+            <option value="ocr">OCR / Carte de visite</option>
+            <option value="webhook">Webhook (n8n / Make)</option>
+            <option value="manual">Ajout manuel</option>
+          </select>
+          <select id="filterTag" class="select">
+            <option value="">Tous les tags</option>
+          </select>
+          <select id="filterDomain" class="select">
+            <option value="">Tous les domaines</option>
+          </select>
+          <button class="btn btn-secondary btn-sm" id="saveSegmentBtn" title="Sauvegarder les filtres actuels comme segment dynamique">🎯 Sauver segment</button>
+          <button class="btn btn-ghost" id="resetFiltersBtn">Réinitialiser</button>
+        </div>
+
+        <!-- Bulk actions bar -->
+        <div class="bulk-bar hidden" id="bulkBar">
+          <span><strong id="bulkCount">0</strong> sélectionné(s)</span>
+          <div class="bulk-actions">
+            <select id="bulkStatusSelect" class="select input-sm">
+              <option value="">Changer statut…</option>
+              <option value="new">Nouveau</option>
+              <option value="contacted">Contacté</option>
+              <option value="client">Client</option>
+              <option value="followup">À relancer</option>
+              <option value="unsubscribed">Ne plus contacter</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" id="bulkStatusBtn">Appliquer</button>
+            <input type="text" id="bulkTagInput" class="input input-sm" placeholder="Nom du tag…" />
+            <button class="btn btn-secondary btn-sm" id="bulkTagBtn">Ajouter tag</button>
+            <button class="btn btn-danger btn-sm" id="bulkDeleteBtn">Supprimer</button>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="card table-card">
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-check"><input type="checkbox" id="selectAllContacts" /></th>
+                  <th>Contact</th>
+                  <th>Email & Qualité</th>
+                  <th>Score</th>
+                  <th>Statut</th>
+                  <th>Entreprise / Pays / Tél</th>
+                  <th>Tags</th>
+                  <th>Source</th>
+                  <th class="col-actions">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="contactsTbody">
+                <tr><td colspan="8" class="empty-cell">Chargement…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination" id="paginationBar"></div>
+        </div>
+      </section>
+
+      <!-- TAB 1B: PIPELINE KANBAN & CRM -->
+      <section class="tab-panel" id="tab-crm">
+        <header class="page-header">
+          <div>
+            <h1>Pipeline Commercial & CRM</h1>
+            <p class="subtitle">Glissez-déposez vos contacts entre les étapes, gérez vos rappels de relance et vos segments dynamiques.</p>
+          </div>
+          <button class="btn btn-secondary" id="refreshCrmBtn">↻ Actualiser</button>
+        </header>
+
+        <div class="subtabs">
+          <button class="subtab active" data-subtab="crm-kanban">🗂 Pipeline Kanban</button>
+          <button class="subtab" data-subtab="crm-tasks">⏰ Rappels & Tâches</button>
+          <button class="subtab" data-subtab="crm-segments">🎯 Segments dynamiques</button>
+        </div>
+
+        <!-- Kanban -->
+        <div class="subtab-panel active" id="subtab-crm-kanban">
+          <div class="card toolbar">
+            <input type="text" id="kanbanSearch" class="input search-input" placeholder="Filtrer le pipeline (nom, email, entreprise)…" />
+            <select id="kanbanMinScore" class="select">
+              <option value="0">Tous les scores</option>
+              <option value="60" selected>Score ≥ 60 (Top Leads)</option>
+              <option value="40">Score ≥ 40</option>
+            </select>
+            <button class="btn btn-primary btn-sm" id="kanbanApplyBtn">Filtrer</button>
+          </div>
+
+          <div class="kanban-board">
+            <div class="kanban-col" data-stage="new">
+              <div class="kanban-col-header"><span>🆕 Nouveau</span><span class="badge badge-st-new" id="kCount-new">0</span></div>
+              <div class="kanban-cards" id="kCol-new"></div>
+            </div>
+            <div class="kanban-col" data-stage="contacted">
+              <div class="kanban-col-header"><span>📨 Contacté</span><span class="badge badge-st-contacted" id="kCount-contacted">0</span></div>
+              <div class="kanban-cards" id="kCol-contacted"></div>
+            </div>
+            <div class="kanban-col" data-stage="followup">
+              <div class="kanban-col-header"><span>⏰ À relancer</span><span class="badge badge-st-followup" id="kCount-followup">0</span></div>
+              <div class="kanban-cards" id="kCol-followup"></div>
+            </div>
+            <div class="kanban-col" data-stage="client">
+              <div class="kanban-col-header"><span>🏆 Client</span><span class="badge badge-st-client" id="kCount-client">0</span></div>
+              <div class="kanban-cards" id="kCol-client"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tasks / Reminders -->
+        <div class="subtab-panel" id="subtab-crm-tasks">
+          <div class="card table-card">
+            <div class="browser-header">
+              <strong>Mes rappels de relance</strong>
+              <span class="subtitle">Ajoutez un rappel depuis la fiche 360° (👁) de n'importe quel contact.</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th class="col-check">Fait</th><th>Rappel</th><th>Contact</th><th>Échéance</th><th class="col-actions">Action</th></tr>
+                </thead>
+                <tbody id="tasksTbody">
+                  <tr><td colspan="5" class="empty-cell">Aucun rappel planifié.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Smart Segments -->
+        <div class="subtab-panel" id="subtab-crm-segments">
+          <div id="segmentsGrid" class="segments-grid">
+            <div class="empty-cell">Chargement des segments…</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 1C: CONVERSION, WHATSAPP, TRACKED LINKS & LEAD FORMS -->
+      <section class="tab-panel" id="tab-conversion">
+        <header class="page-header">
+          <div>
+            <h1>Pack Conversion : WhatsApp, Clics & Capture</h1>
+            <p class="subtitle">Convertissez vos prospects sur WhatsApp en 1 clic, détectez les acheteurs chauds et capturez de nouveaux leads automatiquement.</p>
+          </div>
+          <button class="btn btn-secondary" id="refreshConvBtn">↻ Actualiser</button>
+        </header>
+
+        <div class="subtabs">
+          <button class="subtab active" data-subtab="conv-wa">💬 WhatsApp 1-clic</button>
+          <button class="subtab" data-subtab="conv-links">🔥 Signaux chauds & Liens trackés</button>
+          <button class="subtab" data-subtab="conv-forms">📝 Pages de capture (Lead Magnets)</button>
+          <button class="subtab" data-subtab="conv-b2b">🔍 Prospection B2B & Closing</button>
+        </div>
+
+        <!-- SUBTAB 1: WHATSAPP -->
+        <div class="subtab-panel active" id="subtab-conv-wa">
+          <div class="emailing-grid">
+            <div class="card" style="padding:18px;">
+              <h3 style="margin:0 0 10px;">Modèles de messages WhatsApp</h3>
+              <div style="display:flex;gap:8px;margin-bottom:10px;">
+                <select id="waTemplateSelect" class="select" style="flex:1;"></select>
+                <button class="btn btn-danger btn-sm" id="delWaTplBtn" title="Supprimer">🗑</button>
+              </div>
+              <div class="form-grid">
+                <label class="field full"><span>Nom du modèle</span><input type="text" id="waTplName" class="input" placeholder="Ex: Relance session anglais" /></label>
+                <label class="field full">
+                  <span>Message (variables : <code>{prenom}</code> <code>{nom}</code> <code>{entreprise}</code>)</span>
+                  <textarea id="waTplBody" class="input" rows="5"></textarea>
+                </label>
+              </div>
+              <div style="margin-top:10px;">
+                <button class="btn btn-secondary btn-sm" id="saveWaTplBtn">+ Enregistrer comme nouveau modèle</button>
+              </div>
+            </div>
+
+            <div class="card" style="padding:18px;">
+              <h3 style="margin:0 0 6px;">Prospects prêts à contacter sur WhatsApp</h3>
+              <p class="subtitle" style="margin-bottom:12px;">Classés par meilleur Lead Score. Cliquer ouvre WhatsApp avec le message personnalisé et enregistre l'échange dans le CRM.</p>
+              <div class="table-wrap" style="max-height:360px;overflow-y:auto;">
+                <table class="data-table">
+                  <thead><tr><th>Prospect</th><th>Téléphone</th><th>Score</th><th class="col-actions">Action</th></tr></thead>
+                  <tbody id="waReadyTbody"><tr><td colspan="4" class="empty-cell">Chargement…</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUBTAB 2: HOT SIGNALS & TRACKED LINKS -->
+        <div class="subtab-panel" id="subtab-conv-links">
+          <div class="quality-grid">
+            <div class="card quality-card">
+              <h3>🔗 Créer un lien tracké (Tarifs, Brochure, Inscription)</h3>
+              <p class="subtitle">Chaque clic d'un prospect booste automatiquement son score (+30 pts) et déclenche une alerte Prospect Chaud.</p>
+              <div class="form-grid" style="margin-top:12px;">
+                <label class="field"><span>Nom du lien</span><input type="text" id="linkTitleInput" class="input" placeholder="Ex: Tarifs Anglais Pro 2026" /></label>
+                <label class="field"><span>URL de destination</span><input type="url" id="linkUrlInput" class="input" placeholder="https://votre-site.com/tarifs" /></label>
+              </div>
+              <div style="margin-top:10px;">
+                <button class="btn btn-primary btn-sm" id="createLinkBtn">+ Générer lien tracké</button>
+              </div>
+              <div class="table-wrap" style="margin-top:12px;">
+                <table class="data-table">
+                  <thead><tr><th>Lien</th><th>URL trackée</th><th>Clics</th><th class="col-actions"></th></tr></thead>
+                  <tbody id="linksTbody"><tr><td colspan="4" class="empty-cell">Aucun lien tracké.</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="card quality-card">
+              <h3>🔥 Alertes Prospects Chauds (Intentions d'achat)</h3>
+              <p class="subtitle">Prospects ayant rempli une page de capture, cliqué sur vos liens ou échangé sur WhatsApp.</p>
+              <div id="hotSignalsList" style="display:flex;flex-direction:column;gap:8px;margin-top:12px;max-height:340px;overflow-y:auto;">
+                <div class="empty-cell">Aucun signal pour le moment.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUBTAB 3: LEAD CAPTURE FORMS -->
+        <div class="subtab-panel" id="subtab-conv-forms">
+          <div class="card" style="padding:18px;">
+            <h3 style="margin:0 0 10px;">Créer une mini-page de capture (Lead Magnet)</h3>
+            <div class="form-grid">
+              <label class="field"><span>Titre de la page</span><input type="text" id="formTitleInput" class="input" placeholder="Ex: Guide Anglais Pro PDF gratuit" /></label>
+              <label class="field"><span>Slug URL (optionnel)</span><input type="text" id="formSlugInput" class="input" placeholder="guide-anglais-pro" /></label>
+              <label class="field full"><span>Sous-titre / Promesse</span><input type="text" id="formSubInput" class="input" placeholder="Laissez vos coordonnées pour recevoir le guide immédiatement…" /></label>
+              <label class="field"><span>Texte du bouton</span><input type="text" id="formCtaInput" class="input" value="Recevoir mon accès gratuit" /></label>
+              <label class="field"><span>Tag appliqué aux inscrits</span><input type="text" id="formTagInput" class="input" value="Lead Chaud" /></label>
+            </div>
+            <div style="margin-top:10px;">
+              <button class="btn btn-primary btn-sm" id="createFormBtn">+ Créer la page de capture</button>
+            </div>
+          </div>
+
+          <div class="card table-card">
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Page de capture</th><th>Lien public</th><th>Tag</th><th>Inscrits</th><th class="col-actions">Actions</th></tr></thead>
+                <tbody id="formsTbody"><tr><td colspan="5" class="empty-cell">Chargement…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUBTAB 4: B2B PROSPECTING, COPYWRITING & CLOSING -->
+        <div class="subtab-panel" id="subtab-conv-b2b">
+          <div class="quality-grid">
+            <!-- B2B Web Extractor -->
+            <div class="card quality-card">
+              <h3>🌐 Extracteur B2B (Sites Web → Emails & Tél)</h3>
+              <p class="subtitle">Collez des sites d'entreprises cibles (1 par ligne) : ContactsHub visite la page d'accueil et la page Contact pour aspirer emails pro, téléphones et secteurs.</p>
+              <textarea id="b2bUrlsInput" class="input" rows="5" style="width:100%;margin-top:10px;" placeholder="exemple-banque.com&#10;hotel-lome.tg&#10;cabinet-conseil.ci"></textarea>
+              <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center;">
+                <input type="text" id="b2bTagInput" class="input input-sm" value="Prospection B2B" placeholder="Tag à appliquer…" />
+                <button class="btn btn-primary btn-sm" id="runB2bCrawlBtn">🔍 Extraire les prospects</button>
+                <button class="btn btn-secondary btn-sm hidden" id="importB2bBtn">+ Importer tous (0)</button>
+              </div>
+              <div class="table-wrap" style="margin-top:10px;max-height:220px;overflow-y:auto;">
+                <table class="data-table">
+                  <thead><tr><th>Email</th><th>Entreprise</th><th>Téléphone</th><th>Secteur</th></tr></thead>
+                  <tbody id="b2bResultsTbody"><tr><td colspan="4" class="empty-cell">Saisissez des domaines ci-dessus pour lancer l'extraction.</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Closing Links & Payment Webhook -->
+            <div class="card quality-card">
+              <h3>💳 Liens de Rendez-vous & Paiement (Closing)</h3>
+              <p class="subtitle">Configurez vos liens Calendly / FedaPay / Kkiapay / Stripe : ils seront injectés automatiquement dans vos scripts de vente.</p>
+              <div class="form-grid" style="margin-top:10px;">
+                <label class="field full"><span>Nom de votre business</span><input type="text" id="closeBizName" class="input" placeholder="Mon Centre de Formation en Anglais" /></label>
+                <label class="field full"><span>Lien de prise de RDV (Calendly / Cal.com)</span><input type="url" id="closeBookingUrl" class="input" placeholder="https://calendly.com/votre-centre/test-niveau" /></label>
+                <label class="field full"><span>Lien de paiement (FedaPay / Kkiapay / Stripe)</span><input type="url" id="closePaymentUrl" class="input" placeholder="https://me.fedapay.com/inscription-anglais" /></label>
+              </div>
+              <div style="margin-top:10px;">
+                <button class="btn btn-primary btn-sm" id="saveClosingBtn">💾 Enregistrer mes liens</button>
+              </div>
+              <div class="info-box" style="margin-top:12px;font-size:12px;">
+                <strong>Webhook Paiement Auto-Client :</strong><br />
+                <code id="paymentWebhookDisplay">POST /api/webhooks/payment</code><br />
+                Quand votre outil de paiement envoie <code>{"email":"...","amount":"50000"}</code>, le contact passe automatiquement en <strong>🏆 Client (Score 100)</strong> !
+              </div>
+            </div>
+          </div>
+
+          <!-- Sales Copy Generator -->
+          <div class="card" style="padding:18px;">
+            <h3 style="margin:0 0 10px;">✍️ Générateur de Scripts de Vente (Email & WhatsApp)</h3>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+              <select id="copyOfferSelect" class="select">
+                <option value="b2b_english">Offre : Anglais Pro Entreprises (B2B)</option>
+                <option value="b2c_english">Offre : Cours d'Anglais Particuliers / IELTS (B2C)</option>
+                <option value="generic">Offre : Service / Logiciel B2B</option>
+              </select>
+              <select id="copyChannelSelect" class="select">
+                <option value="email">Canal : Email</option>
+                <option value="whatsapp">Canal : WhatsApp</option>
+              </select>
+              <button class="btn btn-primary btn-sm" id="genCopyBtn">✨ Générer le script</button>
+              <button class="btn btn-secondary btn-sm" id="saveGenCopyBtn">💾 Sauver dans mes modèles</button>
+            </div>
+            <input type="text" id="genCopySubj" class="input" style="width:100%;margin-bottom:8px;" placeholder="Objet généré…" />
+            <textarea id="genCopyBody" class="input" rows="6" style="width:100%;" placeholder="Cliquez sur « Générer le script »…"></textarea>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 1D: TRAINING FORMS BUILDER & REGISTRATIONS -->
+      <section class="tab-panel" id="tab-training-forms">
+        <header class="page-header">
+          <div>
+            <h1>Créateur de Formulaires d'Inscription (Formations)</h1>
+            <p class="subtitle">Créez des fiches d'inscription officielles (format A4 imprimable, signature, Mobile Money, WhatsApp) connectées directement à votre base ContactsHub.</p>
+          </div>
+          <button class="btn btn-primary" id="newTrainingFormBtn">+ Nouveau formulaire de formation</button>
+        </header>
+
+        <!-- Form Builder Card -->
+        <div class="card hidden" id="tfBuilderCard" style="padding:20px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <h3 style="margin:0;" id="tfBuilderTitle">Créer un formulaire de formation</h3>
+            <button class="icon-btn" id="closeTfBuilderBtn">✕</button>
+          </div>
+          <input type="hidden" id="tfEditId" />
+          <div class="form-grid">
+            <label class="field"><span>Nom de l'académie / organisme *</span><input type="text" id="tfOrgName" class="input" value="MSF'S English Learning Academy" /></label>
+            <label class="field"><span>Titre de la formation *</span><input type="text" id="tfTitle" class="input" placeholder="Ex: Formation Intensive Anglais — Mars 2027" /></label>
+            <label class="field"><span>Slug URL (ex: rentree-mars-2027)</span><input type="text" id="tfSlug" class="input" placeholder="rentree-mars-2027" /></label>
+            <label class="field"><span>Badge / Date de rentrée</span><input type="text" id="tfBadge" class="input" placeholder="Ex: Rentrée 15 Mars 2027" /></label>
+            <label class="field"><span>Lieu / Adresse</span><input type="text" id="tfLocation" class="input" value="Lomé — Carrefour Adroukpapé, Avedji Limosine" /></label>
+            <label class="field"><span>N° WhatsApp de confirmation (ex: +22890000000)</span><input type="text" id="tfWhatsapp" class="input" placeholder="+228 90 00 00 00" /></label>
+            <label class="field"><span>Tarif formation</span><input type="text" id="tfTuition" class="input" value="30 000 FCFA" /></label>
+            <label class="field"><span>Frais d'inscription</span><input type="text" id="tfRegFee" class="input" value="5 000 FCFA" /></label>
+            <label class="field"><span>Total (Paiement intégral)</span><input type="text" id="tfTotalFee" class="input" value="35 000 FCFA" /></label>
+            <label class="field"><span>Préfixe N° Dossier</span><input type="text" id="tfPrefix" class="input" value="MSF-2026" /></label>
+            <label class="field"><span>Couleur du thème</span><input type="color" id="tfColor" class="input" value="#0077e6" style="height:38px;padding:3px;" /></label>
+            <label class="field"><span>Tag CRM appliqué aux inscrits</span><input type="text" id="tfTag" class="input" value="Inscrit Formation" /></label>
+            <label class="field full"><span>Sous-titre / Description</span><input type="text" id="tfSubtitle" class="input" placeholder="Formulaire officiel d'inscription..." /></label>
+            <label class="field"><span>Sessions / Horaires (1 par ligne)</span><textarea id="tfSessions" class="input" rows="4">☀️ Session Matin (08h00 - 11h00)
+🌤️ Session Midi (12h30 - 14h00)
+🌙 Session Soir (18h30 - 20h00)</textarea></label>
+            <label class="field"><span>Niveaux disponibles (1 par ligne)</span><textarea id="tfLevels" class="input" rows="4">Débutant (A1)
+Élémentaire (A2)
+Intermédiaire (B1/B2)
+Avancé (C1)</textarea></label>
+            <label class="field"><span>Modes de paiement (1 par ligne)</span><textarea id="tfPayMethods" class="input" rows="4">Espèces (sur place)
+Mixx by Yas (TMoney)
+Flooz (Moov Money)
+Virement</textarea></label>
+            <label class="field"><span>Champs supplémentaires optionnels (1 par ligne)</span><textarea id="tfCustomFields" class="input" rows="4" placeholder="Ex: Comment nous avez-vous connu ?&#10;Code promo"></textarea></label>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button class="btn btn-ghost" id="cancelTfBtn">Annuler</button>
+            <button class="btn btn-primary" id="saveTfBtn">💾 Enregistrer le formulaire</button>
+          </div>
+        </div>
+
+        <!-- Existing Forms List -->
+        <div class="card table-card">
+          <div class="browser-header">
+            <strong>Mes formulaires d'inscription</strong>
+            <button class="btn btn-ghost btn-sm" id="refreshTfBtn">↻ Actualiser</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>Formation</th><th>Type</th><th>Lien public</th><th>Tag CRM</th><th>Inscrits</th><th class="col-actions" style="width:180px;">Actions</th></tr>
+              </thead>
+              <tbody id="tfListTbody"><tr><td colspan="6" class="empty-cell">Chargement…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Submissions Viewer -->
+        <div class="card table-card hidden" id="tfSubmissionsCard">
+          <div class="browser-header">
+            <div>
+              <strong id="tfSubTitle">Inscrits à la formation</strong>
+              <span class="subtitle" id="tfSubCount" style="margin-left:8px;"></span>
+            </div>
+            <a class="btn btn-secondary btn-sm" id="tfExportSubsBtn" href="#">⬇ Exporter les inscrits (CSV)</a>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>N° Dossier</th><th>Candidat</th><th>Email & Tél</th><th>Session & Niveau</th><th>Paiement / Réf.</th><th>Date</th></tr>
+              </thead>
+              <tbody id="tfSubsTbody"><tr><td colspan="6" class="empty-cell">Aucun inscrit pour le moment.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: DASHBOARD & BACKUP -->
+      <section class="tab-panel" id="tab-dashboard">
+        <header class="page-header">
+          <div>
+            <h1>Tableau de bord & Sauvegardes</h1>
+            <p class="subtitle">Vue analytique de votre base de contacts et sauvegarde sécurisée en un clic.</p>
+          </div>
+          <div class="header-actions">
+            <a class="btn btn-secondary" href="/api/backup/download">⬇ Télécharger backup (.db)</a>
+            <button class="btn btn-primary" id="backupDriveBtn">☁️ Sauvegarder sur Google Drive</button>
+          </div>
+        </header>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total contacts</div>
+            <div class="stat-value" id="dashTotal">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Domaines uniques</div>
+            <div class="stat-value" id="dashDomains">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">MX Valides</div>
+            <div class="stat-value" id="dashMxValid">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Imports réalisés</div>
+            <div class="stat-value" id="dashImports">0</div>
+          </div>
+        </div>
+
+        <div class="charts-grid">
+          <div class="card chart-card">
+            <h3>Répartition Pro / Perso / Générique</h3>
+            <div class="chart-box"><canvas id="chartEmailType"></canvas></div>
+          </div>
+          <div class="card chart-card">
+            <h3>Contacts par Source</h3>
+            <div class="chart-box"><canvas id="chartSource"></canvas></div>
+          </div>
+          <div class="card chart-card">
+            <h3>Statuts CRM</h3>
+            <div class="chart-box"><canvas id="chartStatus"></canvas></div>
+          </div>
+          <div class="card chart-card">
+            <h3>Top Domaines Email</h3>
+            <div id="topDomainsList" class="domains-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: QUALITY & CLEANING -->
+      <section class="tab-panel" id="tab-quality">
+        <header class="page-header">
+          <div>
+            <h1>Qualité & Nettoyage de la base</h1>
+            <p class="subtitle">Vérifiez la validité DNS/MX des domaines, isolez les adresses génériques et fusionnez les doublons.</p>
+          </div>
+          <button class="btn btn-secondary" id="refreshDuplicatesBtn">↻ Actualiser les doublons</button>
+        </header>
+
+        <div class="quality-grid">
+          <div class="card quality-card">
+            <h3>🧠 Auto-Enrichissement & Lead Scoring (0–100)</h3>
+            <p class="subtitle">Déduit automatiquement Prénom, Nom, Entreprise, Site Web et Pays depuis vos emails/téléphones, et attribue un Lead Score (0 à 100) à chaque contact.</p>
+            <div class="quality-actions">
+              <button class="btn btn-primary" id="runAutoEnrichBtn">⚡ Enrichir & Scorer toute la base</button>
+              <button class="btn btn-secondary" id="showHotLeadsBtn">🔥 Voir les meilleurs leads (≥ 60)</button>
+            </div>
+            <div id="autoEnrichBox" class="info-box hidden"></div>
+          </div>
+
+          <div class="card quality-card">
+            <h3>🌐 Enrichissement Web par Domaine</h3>
+            <p class="subtitle">Visite automatiquement les sites web des emails professionnels pour détecter le secteur d'activité et la description de chaque entreprise.</p>
+            <div class="quality-actions">
+              <button class="btn btn-primary" id="runWebEnrichBtn">🌐 Enrichir 40 domaines Pro depuis le Web</button>
+            </div>
+            <div id="webEnrichBox" class="info-box hidden"></div>
+          </div>
+
+          <div class="card quality-card">
+            <h3>🔎 Vérification DNS / MX</h3>
+            <p class="subtitle">Teste si chaque domaine email dispose bien d'un serveur de messagerie actif (MX/A).</p>
+            <div class="quality-actions">
+              <button class="btn btn-primary" id="runMxCheckBtn">⚡ Vérifier les domaines MX</button>
+              <button class="btn btn-secondary" id="showInvalidMxBtn">Voir les MX invalides</button>
+            </div>
+            <div id="mxResultBox" class="info-box hidden"></div>
+          </div>
+
+          <div class="card quality-card">
+            <h3>🏷 Classification & Génériques</h3>
+            <p class="subtitle">Sépare automatiquement les adresses Pro, Personnelles (Gmail, Yahoo…) et Génériques (noreply@, info@, contact@…).</p>
+            <div class="quality-actions">
+              <button class="btn btn-secondary" id="reclassifyBtn">Reclassifier toute la base</button>
+              <button class="btn btn-secondary" id="showGenericBtn">Voir les emails génériques</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="browser-header">
+            <div>
+              <strong>Fusion des doublons intelligents</strong>
+              <span class="subtitle" style="margin-left:8px;">Contacts partageant le même nom ou numéro de téléphone avec des emails différents.</span>
+            </div>
+            <span class="badge badge-tag" id="dupCountBadge">0 groupe(s)</span>
+          </div>
+          <div id="duplicatesContainer" class="duplicates-container">
+            <div class="empty-cell">Cliquez sur l'onglet pour rechercher les doublons…</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: GOOGLE DRIVE -->
+      <section class="tab-panel" id="tab-gdrive">
+        <header class="page-header">
+          <div>
+            <h1>Importer depuis Google Drive</h1>
+            <p class="subtitle">Multi-comptes, aperçu avant import, recherche et import en un clic (Sheets, Excel, CSV, PDF, vCard…).</p>
+          </div>
+          <div class="header-actions">
+            <input type="text" id="driveAccountInput" class="input input-sm" placeholder="Compte Drive optionnel (ex: autre@gmail.com)" style="width:270px;" />
+            <button class="btn btn-secondary" id="driveRefreshBtn">↻ Actualiser</button>
+          </div>
+        </header>
+
+        <div class="card toolbar">
+          <input type="text" id="driveSearchInput" class="input search-input" placeholder="Rechercher un fichier sur Google Drive (ex: contacts, clients, prospects)…" />
+          <select id="driveTypeFilter" class="select">
+            <option value="">Tous les types</option>
+            <option value="spreadsheet">Google Sheets</option>
+            <option value="document">Google Docs</option>
+            <option value="pdf">PDF</option>
+            <option value="folder">Dossiers</option>
+          </select>
+          <button class="btn btn-primary" id="driveSearchBtn">Rechercher</button>
+        </div>
+
+        <div class="card">
+          <div class="browser-header">
+            <div class="breadcrumbs" id="driveBreadcrumbs">
+              <button class="crumb-btn" data-folder="">Mon Drive</button>
+            </div>
+            <div class="import-controls">
+              <input type="text" id="driveTagInput" class="input input-sm" placeholder="Tag optionnel (ex: Clients Drive)" />
+              <button class="btn btn-primary" id="driveImportBtn" disabled>Importer la sélection (0)</button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="col-check"><input type="checkbox" id="driveSelectAll" /></th>
+                  <th>Nom du fichier</th>
+                  <th>Type</th>
+                  <th>Taille</th>
+                  <th class="col-actions">Aperçu</th>
+                </tr>
+              </thead>
+              <tbody id="driveTbody">
+                <tr><td colspan="5" class="empty-cell">Cliquez sur l'onglet pour charger Google Drive…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5: LOCAL PC -->
+      <section class="tab-panel" id="tab-local">
+        <header class="page-header">
+          <div>
+            <h1>Importer depuis votre ordinateur</h1>
+            <p class="subtitle">Parcourez Bureau, Documents, Téléchargements et Disque D, prévisualisez vos fichiers ou activez la surveillance automatique.</p>
+          </div>
+        </header>
+
+        <div class="subtabs">
+          <button class="subtab active" data-subtab="pc-browser">📂 Explorateur PC</button>
+          <button class="subtab" data-subtab="pc-upload">⬆ Glisser-Déposer</button>
+          <button class="subtab" data-subtab="pc-watchers">🔄 Surveillance automatique</button>
+        </div>
+
+        <!-- PC Browser -->
+        <div class="subtab-panel active" id="subtab-pc-browser">
+          <div class="shortcuts-bar" id="localShortcuts"></div>
+
+          <div class="card toolbar" style="justify-content: space-between;">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+              <button class="btn btn-primary" id="localScanAllBtn">⚡ Scanner Bureau + Documents + Téléchargements + Disque D</button>
+              <select id="localScanMode" class="select">
+                <option value="structured">CSV, Excel, vCard, JSON</option>
+                <option value="all">Tous les formats (+ PDF, Word, Texte)</option>
+              </select>
+            </div>
+            <span class="subtitle" style="font-size:12.5px;">Formats : .csv, .xlsx, .xls, .vcf, .json, .pdf, .docx, .txt, .eml</span>
+          </div>
+
+          <div class="card">
+            <div class="browser-header">
+              <div class="path-bar">
+                <button class="btn btn-ghost btn-sm" id="localUpBtn">↑ Parent</button>
+                <input type="text" id="localPathInput" class="input input-sm path-input" placeholder="Chemin du dossier…" />
+                <button class="btn btn-secondary btn-sm" id="localGoBtn">Ouvrir</button>
+                <button class="btn btn-secondary btn-sm" id="localScanBtn">🔍 Scanner ce dossier</button>
+              </div>
+              <div class="import-controls">
+                <input type="text" id="localTagInput" class="input input-sm" placeholder="Tag optionnel (ex: PC 2026)" />
+                <button class="btn btn-primary" id="localImportBtn" disabled>Importer la sélection (0)</button>
+              </div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th class="col-check"><input type="checkbox" id="localSelectAll" /></th>
+                    <th>Nom</th>
+                    <th>Format</th>
+                    <th>Taille</th>
+                    <th class="col-actions">Aperçu</th>
+                  </tr>
+                </thead>
+                <tbody id="localTbody">
+                  <tr><td colspan="5" class="empty-cell">Chargement des dossiers…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Drag & Drop Upload -->
+        <div class="subtab-panel" id="subtab-pc-upload">
+          <div class="card upload-card">
+            <div class="dropzone" id="dropzone">
+              <div class="dropzone-icon">📁</div>
+              <h3>Glissez vos fichiers de contacts ici</h3>
+              <p>Formats supportés : CSV, TSV, Excel (.xlsx, .xls), vCard (.vcf), PDF (.pdf), JSON, Word (.docx), Texte (.txt, .eml)</p>
+              <input type="file" id="fileInput" multiple hidden />
+              <button class="btn btn-primary" id="browseFilesBtn">Choisir des fichiers</button>
+            </div>
+            <div class="upload-footer">
+              <input type="text" id="uploadTagInput" class="input" placeholder="Tag optionnel à appliquer aux contacts importés…" />
+              <button class="btn btn-primary" id="startUploadBtn" disabled>Importer les fichiers choisis</button>
+            </div>
+            <ul class="selected-files" id="uploadFileList"></ul>
+          </div>
+        </div>
+
+        <!-- Watched Folders -->
+        <div class="subtab-panel" id="subtab-pc-watchers">
+          <div class="card toolbar">
+            <input type="text" id="watchPathInput" class="input search-input" placeholder="Chemin du dossier à surveiller (ex: C:\Users\A\Downloads ou D:\Contacts)" />
+            <input type="text" id="watchTagInput" class="input" placeholder="Tag auto (ex: Auto-Import)" style="width:200px;" />
+            <select id="watchModeSelect" class="select">
+              <option value="structured">CSV, Excel, vCard, JSON</option>
+              <option value="all">Tous (+ PDF, Word, Texte)</option>
+            </select>
+            <button class="btn btn-primary" id="addWatcherBtn">+ Ajouter surveillance</button>
+            <button class="btn btn-secondary" id="runWatchersNowBtn">▶ Scanner maintenant</button>
+          </div>
+          <div class="card table-card">
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Dossier surveillé</th>
+                    <th>Tag appliqué</th>
+                    <th>Mode</th>
+                    <th>Dernier scan</th>
+                    <th class="col-actions">Action</th>
+                  </tr>
+                </thead>
+                <tbody id="watchersTbody">
+                  <tr><td colspan="5" class="empty-cell">Aucun dossier surveillé.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5B: CONNECTORS & OCR -->
+      <section class="tab-panel" id="tab-connectors">
+        <header class="page-header">
+          <div>
+            <h1>Connecteurs universels, OCR & Webhooks</h1>
+            <p class="subtitle">Aspirez vos correspondants Gmail/Outlook + signatures, scannez vos cartes de visite par OCR, ou connectez n8n / Make / Zapier.</p>
+          </div>
+        </header>
+
+        <div class="quality-grid">
+          <!-- IMAP Email Connector -->
+          <div class="card quality-card">
+            <h3>📬 Aspiration Boîte Email (Gmail / Outlook / IMAP)</h3>
+            <p class="subtitle">Extrait automatiquement tous vos correspondants (De, À, CC) et analyse leurs signatures (téléphone, poste).</p>
+            <div class="form-grid" style="margin-top:12px;">
+              <label class="field">
+                <span>Fournisseur</span>
+                <select id="imapPreset" class="select">
+                  <option value="gmail">Gmail (imap.gmail.com)</option>
+                  <option value="outlook">Outlook / Office365</option>
+                  <option value="yahoo">Yahoo Mail</option>
+                  <option value="custom">Serveur IMAP personnalisé</option>
+                </select>
+              </label>
+              <label class="field"><span>Serveur IMAP</span><input type="text" id="imapHost" class="input" value="imap.gmail.com" /></label>
+              <label class="field"><span>Email</span><input type="email" id="imapUser" class="input" placeholder="votre@gmail.com" /></label>
+              <label class="field"><span>Mot de passe d'application</span><input type="password" id="imapPass" class="input" placeholder="xxxx xxxx xxxx xxxx" /></label>
+              <label class="field"><span>Dossier IMAP</span><input type="text" id="imapFolder" class="input" value="INBOX" /></label>
+              <label class="field"><span>Nombre d'emails à scanner</span><input type="number" id="imapLimit" class="input" value="150" min="10" max="500" /></label>
+              <label class="field full"><span>Tag à appliquer</span><input type="text" id="imapTag" class="input" value="Boîte Email" /></label>
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;">
+              <input type="checkbox" id="imapParseSigs" checked /> Analyser les signatures d'emails (téléphone, poste)
+            </label>
+            <div class="quality-actions">
+              <button class="btn btn-primary" id="runImapImportBtn">🚀 Aspirer les contacts IMAP</button>
+            </div>
+            <div id="imapResultBox" class="info-box hidden"></div>
+          </div>
+
+          <!-- OCR Business Card Scanner -->
+          <div class="card quality-card">
+            <h3>📷 Scanner OCR (Cartes de visite & Images)</h3>
+            <p class="subtitle">Déposez des photos de cartes de visite ou captures d'écran (.png, .jpg, .webp) : l'IA lit le texte et extrait les contacts.</p>
+            <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px;">
+              <input type="file" id="ocrFileInput" accept=".png,.jpg,.jpeg,.webp,.bmp" multiple class="input" />
+              <input type="text" id="ocrTagInput" class="input" value="Carte de visite OCR" placeholder="Tag optionnel…" />
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+                <input type="checkbox" id="ocrAutoImport" checked /> Importer automatiquement les contacts détectés
+              </label>
+              <button class="btn btn-primary" id="runOcrBtn">🔍 Lancer le scan OCR</button>
+            </div>
+            <div id="ocrResultBox" class="info-box hidden" style="max-height:220px;overflow-y:auto;"></div>
+          </div>
+        </div>
+
+        <!-- Webhook & Ecosystem Card -->
+        <div class="card" style="padding:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+            <div>
+              <h3 style="margin:0 0 4px;">🔗 Webhook entrant (n8n, Make, Zapier, Formulaires)</h3>
+              <p class="subtitle">Envoyez de nouveaux contacts en temps réel depuis n'importe quel outil externe via HTTP POST.</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-secondary btn-sm" id="regenWebhookBtn">↻ Régénérer clé</button>
+              <button class="btn btn-primary btn-sm" id="testWebhookBtn">⚡ Tester le Webhook</button>
+            </div>
+          </div>
+          <div class="form-grid">
+            <label class="field">
+              <span>URL du Webhook (POST)</span>
+              <input type="text" id="webhookUrl" class="input" readonly />
+            </label>
+            <label class="field">
+              <span>Clé API (Header <code>X-API-Key</code>)</span>
+              <input type="text" id="webhookToken" class="input" readonly />
+            </label>
+          </div>
+          <pre id="webhookExample" class="info-box" style="font-family:ui-monospace,monospace;font-size:12px;overflow-x:auto;"></pre>
+          <div class="info-box" style="margin-top:10px;">
+            <strong>Imports natifs prêts :</strong> Vos exports <strong>LinkedIn</strong> (<code>Connections.csv</code>), <strong>Google Contacts</strong> (<code>.csv</code> / <code>.vcf</code>) et <strong>WhatsApp</strong> (export discussion <code>.txt</code>) sont automatiquement reconnus dans l'onglet <em>Ordinateur (PC) → Glisser-Déposer</em> !
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 6: EMAILING & TEMPLATES -->
+      <section class="tab-panel" id="tab-emailing">
+        <header class="page-header">
+          <div>
+            <h1>Emailing Pro, Séquences & Délivrabilité</h1>
+            <p class="subtitle">Séquences automatisées multi-étapes (J+0, J+3, J+7), rotation Multi-SMTP anti-spam, vérificateur SPF/DMARC et suivi des ouvertures.</p>
+          </div>
+          <button class="btn btn-secondary" id="toggleSmtpBtn">⚙ SMTP rapide</button>
+        </header>
+
+        <div class="subtabs">
+          <button class="subtab active" data-subtab="em-quick">📝 Envoi rapide & Modèles</button>
+          <button class="subtab" data-subtab="em-sequences">🔁 Séquences automatisées</button>
+          <button class="subtab" data-subtab="em-deliverability">🛡 Délivrabilité & Multi-SMTP</button>
+          <button class="subtab" data-subtab="em-analytics">📈 Suivi & Ouvertures</button>
+        </div>
+
+        <!-- SUBTAB 1: QUICK SEND -->
+        <div class="subtab-panel active" id="subtab-em-quick">
+          <!-- SMTP Config Card -->
+          <div class="card hidden" id="smtpCard" style="padding:18px;">
+            <h3 style="margin:0 0 12px;">Configuration SMTP rapide</h3>
+            <div class="form-grid">
+              <label class="field"><span>Serveur SMTP</span><input type="text" id="smtpHost" class="input" placeholder="smtp.gmail.com" /></label>
+              <label class="field"><span>Port</span><input type="number" id="smtpPort" class="input" value="587" /></label>
+              <label class="field"><span>Email expéditeur</span><input type="email" id="smtpUser" class="input" placeholder="votre@gmail.com" /></label>
+              <label class="field"><span>Mot de passe d'application</span><input type="password" id="smtpPass" class="input" placeholder="Laisser vide pour conserver" /></label>
+              <label class="field full"><span>Nom d'expéditeur</span><input type="text" id="smtpFromName" class="input" placeholder="Votre Nom / Entreprise" /></label>
+            </div>
+            <div style="margin-top:12px;display:flex;justify-content:flex-end;">
+              <button class="btn btn-primary" id="saveSmtpBtn">Enregistrer SMTP</button>
+            </div>
+          </div>
+
+          <div class="emailing-grid">
+            <div class="card" style="padding:18px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;">Modèles & Rédaction</h3>
+                <button class="btn btn-ghost btn-sm" id="newTemplateBtn">+ Nouveau</button>
+              </div>
+              <div style="display:flex;gap:8px;margin-bottom:12px;">
+                <select id="templateSelect" class="select" style="flex:1;"></select>
+                <button class="btn btn-danger btn-sm" id="deleteTemplateBtn">🗑</button>
+              </div>
+              <input type="hidden" id="tplId" />
+              <div class="form-grid">
+                <label class="field full"><span>Nom du modèle</span><input type="text" id="tplName" class="input" placeholder="Ex: Relance prospects" /></label>
+                <label class="field full"><span>Objet</span><input type="text" id="tplSubject" class="input" placeholder="Bonjour {prenom}, ..." /></label>
+                <label class="field full">
+                  <span>Message (variables : <code>{prenom}</code> <code>{nom}</code> <code>{nom_complet}</code> <code>{entreprise}</code> <code>{email}</code>)</span>
+                  <textarea id="tplBody" class="input" rows="8"></textarea>
+                </label>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:12px;">
+                <button class="btn btn-secondary" id="saveTemplateBtn">💾 Enregistrer modèle</button>
+              </div>
+            </div>
+
+            <div class="card" style="padding:18px;">
+              <h3 style="margin:0 0 12px;">Ciblage & Envoi</h3>
+              <div class="form-grid">
+                <label class="field"><span>Filtrer par Tag</span><select id="campTag" class="select"><option value="">Tous les tags</option></select></label>
+                <label class="field">
+                  <span>Filtrer par Statut</span>
+                  <select id="campStatus" class="select">
+                    <option value="">Tous (hors désinscrits)</option>
+                    <option value="new">Nouveau</option>
+                    <option value="followup">À relancer</option>
+                    <option value="client">Client</option>
+                    <option value="contacted">Contacté</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Type d'email</span>
+                  <select id="campType" class="select">
+                    <option value="">Tous</option>
+                    <option value="pro">Professionnels uniquement</option>
+                    <option value="perso">Personnels uniquement</option>
+                  </select>
+                </label>
+                <label class="field"><span>Limite par lot</span><input type="number" id="campMax" class="input" value="50" min="1" max="200" /></label>
+              </div>
+              <div class="info-box" style="margin-top:14px;">
+                <strong>Sécurité RGPD :</strong> Les contacts marqués <em>Ne plus contacter</em> sont exclus automatiquement.
+              </div>
+              <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap;">
+                <button class="btn btn-secondary" id="openMailtoBtn">📨 Ouvrir brouillon Gmail / Mail</button>
+                <button class="btn btn-primary" id="sendCampaignBtn">🚀 Envoyer la campagne (SMTP)</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUBTAB 2: AUTOMATED SEQUENCES -->
+        <div class="subtab-panel" id="subtab-em-sequences">
+          <div class="card" style="padding:18px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+              <h3 style="margin:0;">Créer une séquence automatisée (Drip Campaign)</h3>
+              <button class="btn btn-secondary btn-sm" id="runSequencesNowBtn">▶ Exécuter les envois dus maintenant</button>
+            </div>
+            <div class="form-grid">
+              <label class="field"><span>Nom de la séquence</span><input type="text" id="seqName" class="input" placeholder="Ex: Prospection B2B 3 étapes" /></label>
+              <label class="field"><span>Délai anti-spam entre emails (sec)</span>
+                <div style="display:flex;gap:6px;">
+                  <input type="number" id="seqDelayMin" class="input" value="20" min="5" style="width:90px;" />
+                  <span style="align-self:center;">à</span>
+                  <input type="number" id="seqDelayMax" class="input" value="45" min="5" style="width:90px;" />
+                </div>
+              </label>
+            </div>
+            <div style="margin-top:12px;">
+              <div style="font-weight:600;font-size:12.5px;color:#64748b;margin-bottom:6px;">Étape 1 (J+0 — Email initial)</div>
+              <input type="text" id="seqStep1Subj" class="input" style="width:100%;margin-bottom:6px;" placeholder="Objet étape 1 : Bonjour {prenom}, une idée pour {entreprise}" />
+              <textarea id="seqStep1Body" class="input" rows="3" style="width:100%;" placeholder="Message étape 1…"></textarea>
+            </div>
+            <div style="margin-top:10px;">
+              <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+                <span style="font-weight:600;font-size:12.5px;color:#64748b;">Étape 2 (Relance optionnelle après</span>
+                <input type="number" id="seqStep2Days" class="input input-sm" value="3" min="1" style="width:65px;" />
+                <span style="font-weight:600;font-size:12.5px;color:#64748b;">jours)</span>
+              </div>
+              <input type="text" id="seqStep2Subj" class="input" style="width:100%;margin-bottom:6px;" placeholder="Objet étape 2 : Re: {prenom}, avez-vous eu le temps de voir mon message ?" />
+              <textarea id="seqStep2Body" class="input" rows="3" style="width:100%;" placeholder="Message étape 2 (laisser vide pour 1 seule étape)…"></textarea>
+            </div>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;">
+              <input type="checkbox" id="seqIncludeUnsub" checked /> Inclure automatiquement le lien de désinscription 1-clic (RGPD) + pixel d'ouverture
+            </label>
+            <div style="margin-top:12px;">
+              <button class="btn btn-primary" id="createSequenceBtn">+ Créer la séquence</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="browser-header">
+              <strong>Mes séquences actives</strong>
+              <button class="btn btn-ghost btn-sm" id="refreshSequencesBtn">↻ Actualiser</button>
+            </div>
+            <div id="sequencesList" style="padding:14px;display:flex;flex-direction:column;gap:12px;">
+              <div class="empty-cell">Aucune séquence créée.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUBTAB 3: DELIVERABILITY & MULTI-SMTP -->
+        <div class="subtab-panel" id="subtab-em-deliverability">
+          <div class="quality-grid">
+            <div class="card quality-card">
+              <h3>🛡 Vérificateur DNS (SPF / DMARC / MX)</h3>
+              <p class="subtitle">Vérifiez la réputation technique de votre domaine d'envoi pour éviter le dossier Spam.</p>
+              <div style="display:flex;gap:8px;margin-top:12px;">
+                <input type="text" id="delivDomainInput" class="input" style="flex:1;" placeholder="ex: gmail.com ou votre-entreprise.fr" />
+                <button class="btn btn-primary" id="checkDelivBtn">Vérifier</button>
+              </div>
+              <div id="delivResultBox" class="info-box hidden"></div>
+            </div>
+
+            <div class="card quality-card">
+              <h3>🔄 Ajouter une boîte SMTP (Rotation Multi-SMTP)</h3>
+              <p class="subtitle">Ajoutez plusieurs comptes SMTP : les séquences alternent automatiquement en respectant chaque quota journalier.</p>
+              <div class="form-grid" style="margin-top:10px;">
+                <label class="field"><span>Libellé</span><input type="text" id="mSmtpLabel" class="input" placeholder="Boîte Pro 1" /></label>
+                <label class="field"><span>Serveur SMTP</span><input type="text" id="mSmtpHost" class="input" value="smtp.gmail.com" /></label>
+                <label class="field"><span>Email</span><input type="email" id="mSmtpUser" class="input" placeholder="contact@domaine.com" /></label>
+                <label class="field"><span>Mot de passe d'app</span><input type="password" id="mSmtpPass" class="input" /></label>
+                <label class="field"><span>Nom expéditeur</span><input type="text" id="mSmtpFrom" class="input" /></label>
+                <label class="field"><span>Quota / jour</span><input type="number" id="mSmtpLimit" class="input" value="100" /></label>
+              </div>
+              <div style="margin-top:10px;">
+                <button class="btn btn-primary" id="addMultiSmtpBtn">+ Ajouter à la rotation</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card table-card">
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th>Libellé</th><th>Serveur</th><th>Email</th><th>Envoyés aujourd'hui</th><th>Quota / jour</th><th class="col-actions">Action</th></tr>
+                </thead>
+                <tbody id="multiSmtpTbody">
+                  <tr><td colspan="6" class="empty-cell">Aucune boîte SMTP dans la rotation.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUBTAB 4: ANALYTICS & OPEN TRACKING -->
+        <div class="subtab-panel" id="subtab-em-analytics">
+          <div class="stats-grid">
+            <div class="stat-card"><div class="stat-label">Emails envoyés</div><div class="stat-value" id="emStatSent">0</div></div>
+            <div class="stat-card"><div class="stat-label">Emails ouverts</div><div class="stat-value" id="emStatOpened">0</div></div>
+            <div class="stat-card"><div class="stat-label">Taux d'ouverture</div><div class="stat-value" id="emStatRate">0%</div></div>
+            <div class="stat-card"><div class="stat-label">Échecs / Bounces</div><div class="stat-value" id="emStatFailed">0</div></div>
+          </div>
+          <div class="card table-card">
+            <div class="browser-header">
+              <strong>Journal des envois & ouvertures</strong>
+              <button class="btn btn-secondary btn-sm" id="refreshEmailLogsBtn">↻ Actualiser</button>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th>Date</th><th>Destinataire</th><th>Objet</th><th>Statut</th><th>Ouvertures</th></tr>
+                </thead>
+                <tbody id="emailLogsTbody">
+                  <tr><td colspan="5" class="empty-cell">Aucun envoi enregistré.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 7: HISTORY -->
+      <section class="tab-panel" id="tab-history">
+        <header class="page-header">
+          <div>
+            <h1>Historique des imports</h1>
+            <p class="subtitle">Suivi complet de chaque fichier importé depuis Google Drive, votre PC ou la surveillance auto.</p>
+          </div>
+          <button class="btn btn-secondary" id="refreshHistoryBtn">↻ Actualiser</button>
+        </header>
+
+        <div class="card table-card">
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Source</th>
+                  <th>Fichier</th>
+                  <th>Trouvés</th>
+                  <th>Nouveaux</th>
+                  <th>Mis à jour</th>
+                  <th>Ignorés / Doublons</th>
+                </tr>
+              </thead>
+              <tbody id="historyTbody">
+                <tr><td colspan="7" class="empty-cell">Aucun import pour le moment.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      <!-- TAB 8: ADMIN, SECURITY, GDPR & API -->
+      <section class="tab-panel" id="tab-admin">
+        <header class="page-header">
+          <div>
+            <h1>Administration, Équipe, RGPD & API</h1>
+            <p class="subtitle">Gérez les comptes utilisateurs & rôles, activez la protection par mot de passe, appliquez le RGPD et consultez le journal d'audit.</p>
+          </div>
+          <div class="header-actions">
+            <a class="btn btn-ghost btn-sm hidden" id="logoutBtn" href="/logout">Déconnexion</a>
+            <button class="btn btn-secondary" id="refreshAdminBtn">↻ Actualiser</button>
+          </div>
+        </header>
+
+        <div class="quality-grid">
+          <!-- Auth & Users -->
+          <div class="card quality-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+              <h3 style="margin:0;">🔐 Multi-Utilisateurs & Sécurité</h3>
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;cursor:pointer;">
+                <input type="checkbox" id="authEnabledToggle" /> Protéger par mot de passe
+              </label>
+            </div>
+            <p class="subtitle" style="margin-top:4px;">Créez des comptes avec rôles (Admin, Commercial, Lecture seule) avant d'activer l'écran de connexion.</p>
+            <div class="form-grid" style="margin-top:12px;">
+              <label class="field"><span>Identifiant</span><input type="text" id="uUsername" class="input" placeholder="admin" /></label>
+              <label class="field"><span>Nom affiché</span><input type="text" id="uDisplay" class="input" placeholder="Sylvestre" /></label>
+              <label class="field"><span>Mot de passe</span><input type="password" id="uPassword" class="input" placeholder="Min. 4 caractères" /></label>
+              <label class="field">
+                <span>Rôle</span>
+                <select id="uRole" class="select">
+                  <option value="admin">Administrateur (Complet)</option>
+                  <option value="commercial">Commercial (Édition & Envoi)</option>
+                  <option value="viewer">Lecture seule</option>
+                </select>
+              </label>
+            </div>
+            <div style="margin-top:10px;">
+              <button class="btn btn-primary btn-sm" id="addUserBtn">+ Créer utilisateur</button>
+            </div>
+            <div class="table-wrap" style="margin-top:12px;">
+              <table class="data-table">
+                <thead><tr><th>Identifiant</th><th>Nom</th><th>Rôle</th><th class="col-actions">Action</th></tr></thead>
+                <tbody id="usersTbody"><tr><td colspan="4" class="empty-cell">Aucun utilisateur configuré.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- GDPR Compliance -->
+          <div class="card quality-card">
+            <h3>⚖️ Conformité RGPD (Accès & Oubli)</h3>
+            <p class="subtitle">Exportez toutes les données d'une personne en JSON ou supprimez-la définitivement avec trace d'audit.</p>
+            <div style="display:flex;gap:8px;margin-top:14px;">
+              <input type="email" id="gdprEmailInput" class="input" style="flex:1;" placeholder="email.personne@domaine.com" />
+            </div>
+            <div class="quality-actions">
+              <button class="btn btn-secondary" id="gdprExportBtn">⬇ Exporter dossier RGPD (.json)</button>
+              <button class="btn btn-danger" id="gdprForgetBtn">🗑 Droit à l'oubli (Effacer)</button>
+            </div>
+
+            <div class="info-box" style="margin-top:16px;">
+              <strong>API REST & Intégrations :</strong>
+              <ul style="margin:6px 0 0 18px;padding:0;font-size:12.5px;">
+                <li><code>GET /api/contacts</code> — Lister/filtrer les contacts</li>
+                <li><code>POST /api/webhooks/contacts</code> — Pousser depuis n8n / Make / Zapier</li>
+                <li><code>GET /api/export?format=brevo|mailchimp|google_contacts|xlsx|vcf</code></li>
+                <li><code>GET /api/gdpr/export?email=...</code> — Dossier RGPD</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Audit Log -->
+        <div class="card table-card">
+          <div class="browser-header">
+            <strong>Journal d'audit & traçabilité</strong>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Date</th><th>Utilisateur</th><th>Action</th><th>Détail</th></tr></thead>
+              <tbody id="auditTbody"><tr><td colspan="4" class="empty-cell">Aucun événement enregistré.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Add / Edit Contact Modal -->
+  <div class="modal-backdrop hidden" id="contactModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modalTitle">Nouveau contact</h2>
+        <button class="icon-btn" id="closeModalBtn">✕</button>
+      </div>
+      <form id="contactForm" class="modal-body">
+        <input type="hidden" id="editContactId" />
+        <div class="form-grid">
+          <label class="field">
+            <span>Email *</span>
+            <input type="email" id="fEmail" class="input" required placeholder="prenom.nom@entreprise.com" />
+          </label>
+          <label class="field">
+            <span>Statut CRM</span>
+            <select id="fStatus" class="select">
+              <option value="new">Nouveau</option>
+              <option value="contacted">Contacté</option>
+              <option value="client">Client</option>
+              <option value="followup">À relancer</option>
+              <option value="unsubscribed">Ne plus contacter</option>
+            </select>
+          </label>
+          <label class="field"><span>Prénom</span><input type="text" id="fFirstName" class="input" /></label>
+          <label class="field"><span>Nom</span><input type="text" id="fLastName" class="input" /></label>
+          <label class="field"><span>Téléphone</span><input type="text" id="fPhone" class="input" /></label>
+          <label class="field"><span>Entreprise</span><input type="text" id="fCompany" class="input" /></label>
+          <label class="field"><span>Poste / Fonction</span><input type="text" id="fRole" class="input" /></label>
+          <label class="field"><span>Tags (virgules)</span><input type="text" id="fTags" class="input" placeholder="Clients, VIP, 2026" /></label>
+          <label class="field full"><span>Notes</span><textarea id="fNotes" class="input" rows="3"></textarea></label>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="cancelModalBtn">Annuler</button>
+          <button type="submit" class="btn btn-primary">Enregistrer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Contact 360° Profile Modal -->
+  <div class="modal-backdrop hidden" id="profileModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div>
+          <h2 id="profName">Fiche Contact 360°</h2>
+          <div id="profSub" class="subtitle" style="font-size:12.5px;"></div>
+        </div>
+        <button class="icon-btn" id="closeProfileBtn">✕</button>
+      </div>
+      <div class="modal-body" style="max-height:78vh;overflow-y:auto;">
+        <input type="hidden" id="profContactId" />
+        <div id="profMetaBar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;"></div>
+
+        <div class="quality-grid" style="margin-bottom:14px;">
+          <div class="card" style="padding:12px;margin:0;">
+            <strong style="font-size:13px;">📝 Ajouter une note / appel</strong>
+            <div style="display:flex;gap:6px;margin-top:8px;">
+              <select id="profActKind" class="select input-sm">
+                <option value="note">Note</option>
+                <option value="call">Appel</option>
+                <option value="meeting">Rendez-vous</option>
+              </select>
+              <input type="text" id="profActText" class="input input-sm" style="flex:1;" placeholder="Résumé de l'échange…" />
+              <button class="btn btn-primary btn-sm" id="profAddActBtn">+</button>
+            </div>
+          </div>
+          <div class="card" style="padding:12px;margin:0;">
+            <strong style="font-size:13px;">⏰ Planifier un rappel</strong>
+            <div style="display:flex;gap:6px;margin-top:8px;">
+              <input type="text" id="profTaskTitle" class="input input-sm" style="flex:1;" placeholder="Ex: Relancer devis" />
+              <input type="date" id="profTaskDate" class="input input-sm" />
+              <button class="btn btn-primary btn-sm" id="profAddTaskBtn">+</button>
+            </div>
+          </div>
+        </div>
+
+        <div style="font-weight:600;font-size:13px;margin-bottom:8px;">Chronologie & Activités</div>
+        <div id="profTimeline" style="display:flex;flex-direction:column;gap:8px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- File Preview Modal -->
+  <div class="modal-backdrop hidden" id="previewModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2 id="previewTitle">Aperçu avant import</h2>
+        <button class="icon-btn" id="closePreviewBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="previewSummary" class="info-box" style="margin-bottom:12px;"></div>
+        <div class="table-wrap" style="max-height:380px;overflow-y:auto;">
+          <table class="data-table">
+            <thead>
+              <tr><th>Email</th><th>Nom</th><th>Téléphone</th><th>Entreprise</th></tr>
+            </thead>
+            <tbody id="previewTbody"></tbody>
+          </table>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="closePreviewBtn2">Fermer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

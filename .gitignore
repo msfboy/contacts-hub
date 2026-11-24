@@ -1,0 +1,15 @@
+# Sensitive local database & imported contact files (NEVER commit!)
+contacts.db
+contacts.db-journal
+contacts.db-wal
+contacts.db-shm
+imports_cache/
+backups/
+
+# Python cache & environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.log

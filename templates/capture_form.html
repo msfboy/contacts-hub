@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ form.title }}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 60%, #ecfeff 100%);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      color: #0f172a;
+    }
+    .card {
+      background: #fff;
+      border-radius: 18px;
+      padding: 34px 30px;
+      width: 100%;
+      max-width: 470px;
+      box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+      border: 1px solid #e2e8f0;
+    }
+    .pill {
+      display: inline-block;
+      background: #eef2ff;
+      color: #4f46e5;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 12px;
+    }
+    h1 { margin: 0 0 8px; font-size: 24px; line-height: 1.25; }
+    .sub { margin: 0 0 22px; color: #64748b; font-size: 14px; line-height: 1.5; }
+    label { display: block; font-size: 12.5px; font-weight: 600; color: #475569; margin: 12px 0 5px; }
+    input, textarea {
+      width: 100%; padding: 11px 13px; border: 1px solid #cbd5e1;
+      border-radius: 10px; font-size: 14px; font-family: inherit; outline: none;
+    }
+    input:focus, textarea:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px #eef2ff; }
+    button {
+      width: 100%; margin-top: 20px; padding: 13px; border: 0; border-radius: 10px;
+      background: linear-gradient(135deg, #4f46e5, #6366f1); color: #fff;
+      font-size: 15px; font-weight: 700; cursor: pointer;
+    }
+    button:hover { opacity: 0.95; }
+    .ok-box {
+      background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534;
+      padding: 18px; border-radius: 12px; text-align: center;
+    }
+    .err {
+      background: #fef2f2; color: #b91c1c; padding: 10px 12px;
+      border-radius: 8px; font-size: 13px; margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="pill">Accès gratuit</span>
+    <h1>{{ form.title }}</h1>
+    <p class="sub">{{ form.subtitle }}</p>
+
+    {% if submitted %}
+      <div class="ok-box">
+        <h3 style="margin:0 0 6px;">🎉 Merci {{ name }} !</h3>
+        <p style="margin:0;font-size:14px;">Votre demande est bien enregistrée. Notre équipe vous recontacte très rapidement par email ou WhatsApp.</p>
+      </div>
+    {% else %}
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+      <form method="POST">
+        <label>Nom complet *</label>
+        <input type="text" name="full_name" required placeholder="Ex: Koffi Mensah" />
+        <label>Adresse email *</label>
+        <input type="email" name="email" required placeholder="votre@email.com" />
+        <label>Téléphone / WhatsApp *</label>
+        <input type="text" name="phone" required placeholder="Ex: +228 90 00 00 00" />
+        <label>Entreprise ou Objectif (optionnel)</label>
+        <input type="text" name="company" placeholder="Ex: Anglais Pro, IELTS, Étudiant..." />
+        <button type="submit">{{ form.cta_text }}</button>
+      </form>
+    {% endif %}
+  </div>
+</body>
+</html>

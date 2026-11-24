@@ -1,0 +1,8 @@
+flask
+gunicorn
+openpyxl
+pandas
+python-docx
+pypdf
+dnspython
+Pillow
