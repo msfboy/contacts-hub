@@ -86,6 +86,13 @@ campaigns.start_sequence_scheduler(interval_seconds=45)
 PUBLIC_PREFIXES = ("/login", "/logout", "/static/", "/t/open/", "/unsubscribe/", "/api/webhooks/", "/f/", "/l/")
 
 
+def _current_workspace_id() -> int:
+    try:
+        return max(1, int(session.get("workspace_id") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 @app.before_request
 def _enforce_optional_auth():
     if _get_setting("auth_enabled", "0") != "1":
@@ -97,6 +104,8 @@ def _enforce_optional_auth():
         if path.startswith("/api/"):
             return jsonify({"error": "Authentification requise."}), 401
         return redirect(url_for("login_page"))
+    if path.startswith("/api/admin/") and path != "/api/admin/status" and session.get("role") != "admin":
+        return jsonify({"error": "Accès réservé aux administrateurs."}), 403
     if session.get("role") == "viewer" and request.method in ("POST", "PUT", "DELETE"):
         if not path.startswith("/api/search/natural"):
             return jsonify({"error": "Rôle Lecture seule : modification non autorisée."}), 403
@@ -138,7 +147,11 @@ def index():
 
 @app.route("/api/stats", methods=["GET"])
 def api_stats():
-    return jsonify(db.get_stats())
+    ws_id = _current_workspace_id()
+    stats = db.get_stats(workspace_id=ws_id)
+    ws = db.get_workspace(ws_id)
+    stats["workspace"] = ws
+    return jsonify(stats)
 
 
 @app.route("/api/contacts", methods=["GET"])
@@ -149,6 +162,7 @@ def api_list_contacts():
 
     items, total = db.query_contacts(
         **_filter_args(),
+        workspace_id=_current_workspace_id(),
         sort_by=sort_by,
         page=page,
         per_page=per_page,
@@ -176,6 +190,7 @@ def api_add_contact():
         source_type="manual",
         source_name="Ajout manuel",
         extra_tag="",
+        workspace_id=_current_workspace_id(),
     )
     return jsonify(res), 201
 
@@ -193,6 +208,10 @@ def api_update_contact(contact_id: int):
     status = (data.get("status") or "new").strip().lower()
     if status not in db.VALID_STATUSES:
         status = "new"
+    try:
+        deal_value = float(data.get("deal_value") or 0)
+    except (TypeError, ValueError):
+        deal_value = 0.0
     email_type = db.classify_email(email)
     now = datetime.now().isoformat(timespec="seconds")
 
@@ -203,7 +222,7 @@ def api_update_contact(contact_id: int):
                 UPDATE contacts SET
                     email = ?, first_name = ?, last_name = ?, full_name = ?,
                     phone = ?, company = ?, role = ?, tags = ?, notes = ?,
-                    status = ?, email_type = ?, updated_at = ?
+                    status = ?, deal_value = ?, email_type = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -213,12 +232,32 @@ def api_update_contact(contact_id: int):
                     (data.get("role") or "").strip(),
                     db.normalize_tags(data.get("tags") or ""),
                     (data.get("notes") or "").strip(),
-                    status, email_type, now, contact_id,
+                    status, deal_value, email_type, now, contact_id,
                 ),
             )
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
     return jsonify({"ok": True})
+
+
+@app.route("/api/contacts/<int:contact_id>/deal", methods=["PUT"])
+def api_update_contact_deal(contact_id: int):
+    data = request.get_json(force=True) or {}
+    try:
+        deal_value = max(0.0, float(data.get("deal_value") or 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Montant invalide."}), 400
+    now = datetime.now().isoformat(timespec="seconds")
+    with db.get_conn() as conn:
+        conn.execute(
+            "UPDATE contacts SET deal_value = ?, updated_at = ? WHERE id = ?",
+            (deal_value, now, contact_id),
+        )
+        conn.execute(
+            "INSERT INTO contact_activities (contact_id, kind, content, created_at) VALUES (?, 'note', ?, ?)",
+            (contact_id, f"💰 Montant opportunité mis à jour : {deal_value:,.0f}", now),
+        )
+    return jsonify({"ok": True, "deal_value": deal_value})
 
 
 @app.route("/api/contacts/<int:contact_id>", methods=["DELETE"])
@@ -907,7 +946,9 @@ def api_save_smtp():
     with db.get_conn() as conn:
         existing = conn.execute("SELECT password FROM smtp_config WHERE id = 1").fetchone()
         if not password and existing:
-            password = existing["password"]
+            enc_password = existing["password"]
+        else:
+            enc_password = db.encrypt_secret(password)
         conn.execute(
             """
             INSERT INTO smtp_config (id, host, port, username, password, from_name, use_tls)
@@ -917,7 +958,7 @@ def api_save_smtp():
                 username = excluded.username, password = excluded.password,
                 from_name = excluded.from_name, use_tls = excluded.use_tls
             """,
-            (host, port, username, password, from_name, use_tls),
+            (host, port, username, enc_password, from_name, use_tls),
         )
     return jsonify({"ok": True})
 
@@ -1195,13 +1236,14 @@ def api_add_smtp_account():
 
     now = datetime.now().isoformat(timespec="seconds")
     today = datetime.now().strftime("%Y-%m-%d")
+    enc_password = db.encrypt_secret(password)
     with db.get_conn() as conn:
         conn.execute(
             """
             INSERT INTO smtp_accounts (label, host, port, username, password, from_name, use_tls, daily_limit, sent_today, last_sent_date, enabled, created_at)
             VALUES (?, ?, ?, ?, ?, ?, 1, ?, 0, ?, 1, ?)
             """,
-            (label, host, port, username, password, from_name, daily_limit, today, now),
+            (label, host, port, username, enc_password, from_name, daily_limit, today, now),
         )
     return jsonify({"ok": True}), 201
 
@@ -1235,6 +1277,8 @@ def api_list_sequences():
             s["enrollments"] = {
                 "active": counts.get("active", 0),
                 "completed": counts.get("completed", 0),
+                "replied": counts.get("stopped_replied", 0),
+                "bounced": counts.get("stopped_bounced", 0),
                 "stopped": counts.get("stopped_unsubscribed", 0) + counts.get("stopped_error", 0),
             }
     return jsonify({"items": seqs})
@@ -1337,6 +1381,27 @@ def api_run_sequences_now():
     return jsonify(res)
 
 
+@app.route("/api/sequences/check-replies", methods=["POST"])
+def api_check_sequence_replies():
+    data = request.get_json(silent=True) or {}
+    ws_id = _current_workspace_id()
+    try:
+        res = campaigns.check_replies_and_bounces(
+            workspace_id=ws_id,
+            host=(data.get("host") or "").strip(),
+            port=int(data.get("port") or 993),
+            username=(data.get("username") or "").strip(),
+            password=data.get("password") or "",
+        )
+        _log_audit(
+            "check_replies",
+            f"Scan IMAP: {res['scanned']} lus, {res['replies_stopped']} réponses, {res['bounces_stopped']} bounces",
+        )
+        return jsonify(res)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
 @app.route("/api/emailing/logs", methods=["GET"])
 def api_emailing_logs():
     with db.get_conn() as conn:
@@ -1368,16 +1433,31 @@ def api_crm_pipeline():
     tag = request.args.get("tag", "")
     min_score = int(request.args.get("min_score") or 0)
     limit = min(60, max(10, int(request.args.get("limit") or 25)))
+    ws_id = _current_workspace_id()
+    ws = db.get_workspace(ws_id)
 
     stages = ["new", "contacted", "followup", "client"]
     columns: Dict[str, Any] = {}
-    for st in stages:
-        items, total = db.query_contacts(
-            q=q, tag=tag, status=st, min_score=min_score,
-            sort_by="score_desc", page=1, per_page=limit
-        )
-        columns[st] = {"items": items, "total": total}
-    return jsonify({"columns": columns})
+    pipeline_value_total = 0.0
+    with db.get_conn() as conn:
+        for st in stages:
+            items, total = db.query_contacts(
+                q=q, tag=tag, status=st, min_score=min_score,
+                workspace_id=ws_id,
+                sort_by="score_desc", page=1, per_page=limit
+            )
+            val_row = conn.execute(
+                "SELECT COALESCE(SUM(deal_value), 0) AS val FROM contacts WHERE status = ? AND COALESCE(workspace_id, 1) = ?",
+                (st, ws_id),
+            ).fetchone()
+            stage_val = float(val_row["val"] or 0) if val_row else 0.0
+            pipeline_value_total += stage_val
+            columns[st] = {"items": items, "total": total, "value_total": stage_val}
+    return jsonify({
+        "columns": columns,
+        "pipeline_value_total": pipeline_value_total,
+        "currency": ws.get("currency") or "FCFA",
+    })
 
 
 @app.route("/api/crm/pipeline/move", methods=["POST"])
@@ -1567,6 +1647,58 @@ def api_delete_segment(sid: int):
     return jsonify({"ok": True})
 
 
+# ---------------- SAAS WORKSPACES, WHITE-LABEL & ONBOARDING ----------------
+
+
+@app.route("/api/workspaces", methods=["GET"])
+def api_list_workspaces():
+    ws_id = _current_workspace_id()
+    return jsonify({
+        "current": db.get_workspace(ws_id),
+        "items": db.list_workspaces(),
+    })
+
+
+@app.route("/api/workspaces", methods=["POST"])
+def api_create_workspace():
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Nom de l'espace client requis."}), 400
+    ws = db.create_workspace(
+        name=name,
+        tagline=(data.get("tagline") or "CRM & Croissance").strip(),
+        primary_color=(data.get("primary_color") or "#2563eb").strip(),
+        currency=(data.get("currency") or "FCFA").strip(),
+        plan=(data.get("plan") or "pro").strip(),
+    )
+    session["workspace_id"] = ws["id"]
+    _log_audit("workspace_create", f"Nouvel espace SaaS créé : {ws['name']} ({ws['slug']})")
+    return jsonify({"ok": True, "workspace": ws}), 201
+
+
+@app.route("/api/workspaces/switch", methods=["POST"])
+def api_switch_workspace():
+    data = request.get_json(force=True) or {}
+    try:
+        ws_id = int(data.get("workspace_id") or 1)
+    except (TypeError, ValueError):
+        return jsonify({"error": "ID d'espace invalide."}), 400
+    ws = db.get_workspace(ws_id)
+    session["workspace_id"] = ws["id"]
+    _log_audit("workspace_switch", f"Changement d'espace actif : {ws['name']}")
+    return jsonify({"ok": True, "workspace": ws})
+
+
+@app.route("/api/workspaces/current", methods=["PUT"])
+def api_update_current_workspace():
+    data = request.get_json(force=True) or {}
+    ws_id = _current_workspace_id()
+    ws = db.update_workspace(ws_id, data)
+    _log_audit("workspace_update", f"Marque blanche / config mise à jour pour {ws['name']}")
+    return jsonify({"ok": True, "workspace": ws})
+
+
 # ---------------- ADMIN, USERS, SECURITY, AUDIT & GDPR ----------------
 
 
@@ -1606,8 +1738,8 @@ def api_admin_add_user():
     password = data.get("password") or ""
     if role not in ("admin", "commercial", "viewer"):
         role = "commercial"
-    if not username or len(password) < 4:
-        return jsonify({"error": "Identifiant requis et mot de passe de 4 caractères minimum."}), 400
+    if not username or len(password) < 6:
+        return jsonify({"error": "Identifiant requis et mot de passe de 6 caractères minimum."}), 400
     now = datetime.now().isoformat(timespec="seconds")
     try:
         with db.get_conn() as conn:

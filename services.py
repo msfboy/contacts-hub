@@ -1,5 +1,6 @@
 import concurrent.futures
 import os
+import re
 import smtplib
 import threading
 import time
@@ -246,7 +247,7 @@ def send_campaign_smtp(
     host = (smtp_cfg.get("host") or "").strip()
     port = int(smtp_cfg.get("port") or 587)
     username = (smtp_cfg.get("username") or "").strip()
-    password = smtp_cfg.get("password") or ""
+    password = db.decrypt_secret(smtp_cfg.get("password") or "")
     from_name = (smtp_cfg.get("from_name") or "").strip()
     use_tls = bool(smtp_cfg.get("use_tls", True))
 
@@ -271,7 +272,15 @@ def send_campaign_smtp(
                 try:
                     subj = render_merge_text(subject_tpl, c)
                     body = render_merge_text(body_tpl, c)
-                    msg = MIMEText(body, "plain", "utf-8")
+                    is_html = bool(re.search(r"<(b|strong|i|em|u|p|br|div|a|ul|ol|li|h[1-6]|span)\b", body, flags=re.IGNORECASE))
+                    if is_html:
+                        from email.mime.multipart import MIMEMultipart
+                        msg = MIMEMultipart("alternative")
+                        plain = re.sub(r"<[^>]+>", "", re.sub(r"<br\s*/?>", "\n", body, flags=re.IGNORECASE))
+                        msg.attach(MIMEText(plain, "plain", "utf-8"))
+                        msg.attach(MIMEText(f'<html><body style="font-family:Arial,sans-serif;font-size:14px;color:#0f172a;line-height:1.5;">{body}</body></html>', "html", "utf-8"))
+                    else:
+                        msg = MIMEText(body, "plain", "utf-8")
                     msg["Subject"] = subj
                     msg["From"] = formataddr((from_name, username)) if from_name else username
                     msg["To"] = c["email"]

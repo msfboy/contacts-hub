@@ -572,6 +572,7 @@ function openEditModal(id) {
   $("fPhone").value = c.phone || "";
   $("fCompany").value = c.company || "";
   $("fRole").value = c.role || "";
+  if ($("fDealValue")) $("fDealValue").value = c.deal_value || "";
   $("fTags").value = c.tags || "";
   $("fNotes").value = c.notes || "";
   $("contactModal").classList.remove("hidden");
@@ -593,6 +594,7 @@ $("contactForm").addEventListener("submit", async (e) => {
     phone: $("fPhone").value.trim(),
     company: $("fCompany").value.trim(),
     role: $("fRole").value.trim(),
+    deal_value: Number($("fDealValue")?.value || 0),
     tags: $("fTags").value.trim(),
     notes: $("fNotes").value.trim(),
   };
@@ -1448,6 +1450,11 @@ function selectTemplate(id) {
   $("tplName").value = t.name;
   $("tplSubject").value = t.subject;
   $("tplBody").value = t.body;
+  if ($("tplBodyVisual")) {
+    $("tplBodyVisual").innerHTML = /<[a-z][\s\S]*>/i.test(t.body || "")
+      ? t.body
+      : esc(t.body || "").replace(/\n/g, "<br>");
+  }
 }
 
 $("templateSelect").addEventListener("change", (e) => selectTemplate(e.target.value));
@@ -1457,6 +1464,7 @@ $("newTemplateBtn").addEventListener("click", () => {
   $("tplName").value = "";
   $("tplSubject").value = "";
   $("tplBody").value = "";
+  if ($("tplBodyVisual")) $("tplBodyVisual").innerHTML = "";
 });
 
 $("saveTemplateBtn").addEventListener("click", async () => {
@@ -1556,7 +1564,7 @@ async function loadSequences() {
             <div>
               <strong>${esc(s.name)}</strong>
               <span class="badge ${s.status === "active" ? "badge-st-client" : "badge-st-followup"}" style="margin-left:6px;">${s.status === "active" ? "Active" : "En pause"}</span>
-              <span class="subtitle" style="margin-left:8px;">${s.steps.length} étape(s) · Délai ${s.delay_min_sec}-${s.delay_max_sec}s · Actifs: ${s.enrollments.active}, Terminés: ${s.enrollments.completed}</span>
+              <span class="subtitle" style="margin-left:8px;">${s.steps.length} étape(s) · Délai ${s.delay_min_sec}-${s.delay_max_sec}s · Actifs: ${s.enrollments.active}, Terminés: ${s.enrollments.completed}, 💬 Réponses: ${s.enrollments.replied || 0}, ⚠️ Bounces: ${s.enrollments.bounced || 0}</span>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
               <button class="btn btn-primary btn-sm seq-enroll-btn" data-id="${s.id}">+ Inscrire contacts</button>
@@ -1784,9 +1792,18 @@ async function loadKanban() {
 
   try {
     const data = await api(`/api/crm/pipeline?${params.toString()}`);
+    const cur = data.currency || "FCFA";
+    const fmtMoney = (v) => `${Number(v || 0).toLocaleString("fr-FR")} ${cur}`;
+    if ($("kanbanTotalValue")) $("kanbanTotalValue").textContent = fmtMoney(data.pipeline_value_total);
+    if ($("kanbanWonValue")) $("kanbanWonValue").textContent = fmtMoney(data.columns?.client?.value_total || 0);
+    if ($("kanbanActiveValue")) {
+      const act = (data.columns?.contacted?.value_total || 0) + (data.columns?.followup?.value_total || 0);
+      $("kanbanActiveValue").textContent = fmtMoney(act);
+    }
     ["new", "contacted", "followup", "client"].forEach((stage) => {
-      const colData = data.columns[stage] || { items: [], total: 0 };
+      const colData = data.columns[stage] || { items: [], total: 0, value_total: 0 };
       $(`kCount-${stage}`).textContent = colData.total;
+      if ($(`kVal-${stage}`)) $(`kVal-${stage}`).textContent = fmtMoney(colData.value_total);
       const box = $(`kCol-${stage}`);
       if (!colData.items.length) {
         box.innerHTML = '<div class="empty-cell" style="padding:18px 8px!important;font-size:12px;">Glissez un contact ici</div>';
@@ -1802,6 +1819,7 @@ async function loadKanban() {
               <span>${esc(c.company || c.country || "—")}</span>
               ${scoreBadge(c.lead_score)}
             </div>
+            ${Number(c.deal_value) > 0 ? `<div class="kanban-deal-pill">💰 ${fmtMoney(c.deal_value)}</div>` : ""}
           </div>
         `
         )
@@ -2751,6 +2769,311 @@ $("gdprForgetBtn").addEventListener("click", async () => {
   }
 });
 
+// ---------------- SAAS WORKSPACES, WHITE-LABEL, ONBOARDING, WYSIWYG & IMAP AUTO-STOP ----------------
+
+let currentWorkspace = null;
+
+function applyWorkspaceBranding(ws) {
+  if (!ws) return;
+  currentWorkspace = ws;
+  const name = ws.name || "ContactsHub";
+  const tagline = ws.tagline || "CRM & Centralisation Email";
+  const color = ws.primary_color || "#2563eb";
+  document.documentElement.style.setProperty("--primary", color);
+  document.title = `${name} — Plateforme CRM & Emailing`;
+  if ($("brandName")) $("brandName").textContent = name;
+  if ($("brandTagline")) $("brandTagline").textContent = tagline;
+  if ($("brandIcon")) {
+    if (ws.logo_url) {
+      $("brandIcon").innerHTML = `<img src="${esc(ws.logo_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />`;
+    } else {
+      $("brandIcon").textContent = (name.trim()[0] || "@").toUpperCase();
+      $("brandIcon").style.background = color;
+    }
+  }
+  // Fill Admin White-Label fields
+  if ($("wsName")) $("wsName").value = ws.name || "";
+  if ($("wsTagline")) $("wsTagline").value = ws.tagline || "";
+  if ($("wsLogoUrl")) $("wsLogoUrl").value = ws.logo_url || "";
+  if ($("wsPrimaryColor")) $("wsPrimaryColor").value = color;
+  if ($("wsPrimaryColorHex")) $("wsPrimaryColorHex").value = color;
+  if ($("wsCurrency")) $("wsCurrency").value = ws.currency || "FCFA";
+  if ($("wsPublicBaseUrl")) $("wsPublicBaseUrl").value = ws.public_base_url || "";
+  if ($("wsEmailSignature")) $("wsEmailSignature").value = ws.email_signature || "";
+  if ($("wsImapHost")) $("wsImapHost").value = ws.imap_host || "";
+  if ($("wsImapPort")) $("wsImapPort").value = ws.imap_port || 993;
+  if ($("wsImapUser")) $("wsImapUser").value = ws.imap_username || "";
+  if ($("wsImapPass")) $("wsImapPass").value = "";
+}
+
+async function loadWorkspaces() {
+  try {
+    const data = await api("/api/workspaces");
+    applyWorkspaceBranding(data.current);
+    const sel = $("workspaceSwitcher");
+    if (sel) {
+      sel.innerHTML = (data.items || [])
+        .map((w) => `<option value="${w.id}" ${w.id === data.current.id ? "selected" : ""}>${esc(w.name)} (${w.contacts_count})</option>`)
+        .join("");
+    }
+    if ($("wsListSummary")) {
+      $("wsListSummary").textContent = `${(data.items || []).length} espace(s) actif(s) — Espace courant : ${data.current.name} (Plan ${(data.current.plan || "pro").toUpperCase()})`;
+    }
+  } catch (e) {
+    console.warn("Workspace load error:", e);
+  }
+}
+
+$("workspaceSwitcher")?.addEventListener("change", async (e) => {
+  try {
+    const res = await api("/api/workspaces/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: Number(e.target.value) }),
+    });
+    applyWorkspaceBranding(res.workspace);
+    toast(`Espace actif : ${res.workspace.name}`, "success");
+    refreshAll();
+    if (!$("tab-crm").classList.contains("hidden")) loadKanban();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+
+async function createNewWorkspacePrompt(nameVal) {
+  const name = (nameVal || prompt("Nom du nouvel espace client SaaS (ex: Académie Alpha) :") || "").trim();
+  if (!name) return;
+  try {
+    const res = await api("/api/workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    toast(`Espace SaaS "${res.workspace.name}" créé et activé !`, "success");
+    if ($("newWsNameInput")) $("newWsNameInput").value = "";
+    await loadWorkspaces();
+    refreshAll();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+$("quickNewWsBtn")?.addEventListener("click", () => createNewWorkspacePrompt());
+$("createWorkspaceBtn")?.addEventListener("click", () => createNewWorkspacePrompt($("newWsNameInput")?.value));
+
+$("wsPrimaryColor")?.addEventListener("input", (e) => {
+  if ($("wsPrimaryColorHex")) $("wsPrimaryColorHex").value = e.target.value;
+});
+$("wsPrimaryColorHex")?.addEventListener("input", (e) => {
+  if (/^#[0-9a-fA-F]{6}$/.test(e.target.value) && $("wsPrimaryColor")) {
+    $("wsPrimaryColor").value = e.target.value;
+  }
+});
+
+$("saveBrandingBtn")?.addEventListener("click", async () => {
+  try {
+    const payload = {
+      name: $("wsName").value.trim(),
+      tagline: $("wsTagline").value.trim(),
+      logo_url: $("wsLogoUrl").value.trim(),
+      primary_color: $("wsPrimaryColorHex").value.trim() || $("wsPrimaryColor").value,
+      currency: $("wsCurrency").value,
+      public_base_url: $("wsPublicBaseUrl").value.trim(),
+      email_signature: $("wsEmailSignature").value,
+      imap_host: $("wsImapHost").value.trim(),
+      imap_port: Number($("wsImapPort").value || 993),
+      imap_username: $("wsImapUser").value.trim(),
+    };
+    const imapPass = $("wsImapPass").value;
+    if (imapPass) payload.imap_password = imapPass;
+    const res = await api("/api/workspaces/current", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    applyWorkspaceBranding(res.workspace);
+    await loadWorkspaces();
+    toast("Marque blanche & configuration SaaS enregistrées !", "success");
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+
+// IMAP Reply & Bounce Auto-Stop trigger
+$("checkSeqRepliesBtn")?.addEventListener("click", async () => {
+  const btn = $("checkSeqRepliesBtn");
+  btn.disabled = true;
+  btn.textContent = "⏳ Scan IMAP en cours…";
+  try {
+    const res = await api("/api/sequences/check-replies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    toast(
+      `IMAP scanné (${res.scanned} emails) : ${res.replies_stopped} réponse(s) stoppée(s), ${res.bounces_stopped} bounce(s) détecté(s).`,
+      "success"
+    );
+    loadSequences();
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "📥 Vérifier réponses & bounces (IMAP)";
+  }
+});
+
+// WYSIWYG Email Composer sync
+let wysiwygHtmlMode = false;
+const wyEditor = $("tplBodyVisual");
+const wyRaw = $("tplBody");
+
+function syncWysiwygToTextarea() {
+  if (!wyEditor || !wyRaw || wysiwygHtmlMode) return;
+  wyRaw.value = wyEditor.innerHTML;
+}
+wyEditor?.addEventListener("input", syncWysiwygToTextarea);
+
+$("toggleWysiwygModeBtn")?.addEventListener("click", () => {
+  if (!wyEditor || !wyRaw) return;
+  wysiwygHtmlMode = !wysiwygHtmlMode;
+  if (wysiwygHtmlMode) {
+    wyRaw.value = wyEditor.innerHTML;
+    wyEditor.classList.add("hidden");
+    wyRaw.classList.remove("hidden");
+    $("toggleWysiwygModeBtn").textContent = "👁 Mode Visuel";
+  } else {
+    wyEditor.innerHTML = wyRaw.value;
+    wyRaw.classList.add("hidden");
+    wyEditor.classList.remove("hidden");
+    $("toggleWysiwygModeBtn").textContent = "</> Mode HTML";
+  }
+});
+
+$("wysiwygToolbar")?.querySelectorAll("button[data-cmd]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    wyEditor?.focus();
+    document.execCommand(btn.dataset.cmd, false, null);
+    syncWysiwygToTextarea();
+  });
+});
+
+$("wysiwygToolbar")?.querySelectorAll("button[data-var]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    wyEditor?.focus();
+    document.execCommand("insertText", false, btn.dataset.var);
+    syncWysiwygToTextarea();
+  });
+});
+
+$("wyInsertLinkBtn")?.addEventListener("click", () => {
+  const url = prompt("URL du lien (ex: https://...):", "https://");
+  if (!url) return;
+  wyEditor?.focus();
+  document.execCommand("createLink", false, url.trim());
+  syncWysiwygToTextarea();
+});
+
+$("wyInsertCtaBtn")?.addEventListener("click", () => {
+  const label = prompt("Texte du bouton CTA :", "Je m'inscris maintenant");
+  if (!label) return;
+  const url = prompt("Lien du bouton :", "https://");
+  if (!url) return;
+  const color = currentWorkspace?.primary_color || "#0077e6";
+  const ctaHtml = `<p style="margin:14px 0;"><a href="${esc(url.trim())}" style="display:inline-block;background:${esc(color)};color:#ffffff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600;">${esc(label.trim())}</a></p>`;
+  wyEditor?.focus();
+  document.execCommand("insertHTML", false, ctaHtml);
+  syncWysiwygToTextarea();
+});
+
+// Onboarding Wizard (3 steps)
+function setOnboardingStep(step) {
+  [1, 2, 3].forEach((n) => {
+    $(`obPanel${n}`)?.classList.toggle("hidden", n !== step);
+    document.querySelector(`.ob-step[data-ob="${n}"]`)?.classList.toggle("active", n === step);
+  });
+}
+
+function openOnboardingWizard() {
+  const ws = currentWorkspace || {};
+  if ($("obName")) $("obName").value = ws.name || "MSF'S English Learning Academy";
+  if ($("obTagline")) $("obTagline").value = ws.tagline || "CRM, Inscriptions & Croissance";
+  if ($("obColor")) $("obColor").value = ws.primary_color || "#0077e6";
+  if ($("obCurrency")) $("obCurrency").value = ws.currency || "FCFA";
+  if ($("obBaseUrl")) $("obBaseUrl").value = ws.public_base_url || "";
+  if ($("obImapHost")) $("obImapHost").value = ws.imap_host || "imap.gmail.com";
+  if ($("obImapUser")) $("obImapUser").value = ws.imap_username || "";
+  if ($("obImapPass")) $("obImapPass").value = "";
+  if ($("obContactsSummary")) {
+    $("obContactsSummary").textContent = `${$("statTotal")?.textContent || "0"} contacts dans l'espace "${ws.name || "MSF"}"`;
+  }
+  setOnboardingStep(1);
+  $("onboardingModal")?.classList.remove("hidden");
+}
+
+$("openOnboardingBtn")?.addEventListener("click", openOnboardingWizard);
+$("adminOpenOnboardingBtn")?.addEventListener("click", openOnboardingWizard);
+$("closeOnboardingBtn")?.addEventListener("click", () => $("onboardingModal")?.classList.add("hidden"));
+
+$("obNext1Btn")?.addEventListener("click", async () => {
+  try {
+    const res = await api("/api/workspaces/current", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: $("obName").value.trim(),
+        tagline: $("obTagline").value.trim(),
+        primary_color: $("obColor").value,
+        currency: $("obCurrency").value,
+        public_base_url: $("obBaseUrl").value.trim(),
+      }),
+    });
+    applyWorkspaceBranding(res.workspace);
+    setOnboardingStep(2);
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+
+$("obPrev2Btn")?.addEventListener("click", () => setOnboardingStep(1));
+$("obNext2Btn")?.addEventListener("click", () => setOnboardingStep(3));
+$("obPrev3Btn")?.addEventListener("click", () => setOnboardingStep(2));
+
+$("obGoLocalBtn")?.addEventListener("click", () => {
+  $("onboardingModal")?.classList.add("hidden");
+  document.querySelector('.nav-item[data-tab="local"]')?.click();
+});
+$("obGoFormsBtn")?.addEventListener("click", () => {
+  $("onboardingModal")?.classList.add("hidden");
+  document.querySelector('.nav-item[data-tab="training-forms"]')?.click();
+});
+$("obGoPipelineBtn")?.addEventListener("click", () => {
+  $("onboardingModal")?.classList.add("hidden");
+  document.querySelector('.nav-item[data-tab="crm"]')?.click();
+});
+
+$("obFinishBtn")?.addEventListener("click", async () => {
+  try {
+    const payload = {
+      imap_host: $("obImapHost").value.trim(),
+      imap_username: $("obImapUser").value.trim(),
+      onboarding_done: true,
+    };
+    if ($("obImapPass").value) payload.imap_password = $("obImapPass").value;
+    const res = await api("/api/workspaces/current", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    applyWorkspaceBranding(res.workspace);
+    $("onboardingModal")?.classList.add("hidden");
+    toast("Espace SaaS prêt ! Bienvenue dans " + res.workspace.name, "success");
+    loadWorkspaces();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+
 // ---------------- INIT ----------------
 
 function refreshAll() {
@@ -2758,5 +3081,6 @@ function refreshAll() {
   loadContacts();
 }
 
+loadWorkspaces();
 checkDriveStatus();
 refreshAll();

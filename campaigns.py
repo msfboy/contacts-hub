@@ -1,19 +1,34 @@
+import email as email_lib
 import html
+import imaplib
 import random
+import re
 import smtplib
 import threading
 import time
 import uuid
 from datetime import datetime, timedelta
+from email.header import decode_header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formataddr
+from email.utils import formataddr, parseaddr
 from typing import Any, Dict, List, Optional, Tuple
 
 import dns.resolver
 
 import db
 import services
+
+
+def _strip_html(raw: str) -> str:
+    txt = re.sub(r"<br\s*/?>", "\n", raw or "", flags=re.IGNORECASE)
+    txt = re.sub(r"</p\s*>", "\n\n", txt, flags=re.IGNORECASE)
+    txt = re.sub(r"<[^>]+>", "", txt)
+    return html.unescape(txt).strip()
+
+
+def _looks_like_html(raw: str) -> bool:
+    return bool(re.search(r"<(b|strong|i|em|u|p|br|div|a|ul|ol|li|h[1-6]|span)\b", raw or "", flags=re.IGNORECASE))
 
 
 # ---------------- DELIVERABILITY CHECKER (SPF / DMARC / MX) ----------------
@@ -152,15 +167,31 @@ def send_single_tracked_email(
 ) -> Tuple[bool, str, str]:
     tracking_id = uuid.uuid4().hex
     subj = services.render_merge_text(subject_tpl, contact)
-    body_text = services.render_merge_text(body_tpl, contact)
+    body_rendered = services.render_merge_text(body_tpl, contact)
+    ws = db.get_workspace(int(contact.get("workspace_id") or 1))
+    if ws.get("public_base_url"):
+        base_url = ws["public_base_url"].rstrip("/")
+    sig = (ws.get("email_signature") or "").strip()
+
     unsub_url = f"{base_url.rstrip('/')}/unsubscribe/{tracking_id}"
     pixel_url = f"{base_url.rstrip('/')}/t/open/{tracking_id}.gif"
 
-    plain_full = body_text
+    if _looks_like_html(body_rendered):
+        plain_core = _strip_html(body_rendered)
+        html_body = body_rendered
+    else:
+        plain_core = body_rendered
+        html_body = "<br>".join(html.escape(ln) for ln in body_rendered.splitlines())
+
+    if sig:
+        plain_core = f"{plain_core}\n\n--\n{sig}"
+        sig_html = "<br>".join(html.escape(ln) for ln in sig.splitlines())
+        html_body += f'<div style="margin-top:16px;padding-top:10px;border-top:1px solid #e2e8f0;color:#475569;font-size:13px;">{sig_html}</div>'
+
+    plain_full = plain_core
     if include_unsubscribe:
         plain_full += f"\n\n---\nPour ne plus recevoir nos messages : {unsub_url}"
 
-    html_body = "<br>".join(html.escape(ln) for ln in body_text.splitlines())
     unsub_html = (
         f'<hr style="border:none;border-top:1px solid #e2e8f0;margin:20px 0;">'
         f'<p style="font-size:11px;color:#94a3b8;">Pour ne plus recevoir nos emails, '
@@ -179,6 +210,7 @@ def send_single_tracked_email(
     msg["Subject"] = subj
     from_name = (smtp_acc.get("from_name") or "").strip()
     username = smtp_acc["username"].strip()
+    smtp_password = db.decrypt_secret(smtp_acc.get("password") or "")
     msg["From"] = formataddr((from_name, username)) if from_name else username
     msg["To"] = contact["email"]
     if include_unsubscribe:
@@ -192,7 +224,7 @@ def send_single_tracked_email(
         try:
             if smtp_acc.get("use_tls", 1):
                 server.starttls()
-            server.login(username, smtp_acc["password"])
+            server.login(username, smtp_password)
             server.sendmail(username, [contact["email"]], msg.as_string())
         finally:
             try:
@@ -338,6 +370,158 @@ def process_due_sequences(max_batch: int = 10, apply_delay: bool = False, base_u
     return {"due_checked": len(due), "sent": sent, "errors": errors, "completed": completed}
 
 
+# ---------------- IMAP REPLY & BOUNCE AUTO-STOP ----------------
+
+BOUNCE_SENDERS = ("mailer-daemon", "postmaster", "mail delivery subsystem", "mail-daemon")
+BOUNCE_SUBJECT_HINTS = (
+    "undelivered", "delivery status notification", "failure notice",
+    "returned mail", "mail delivery failed", "address not found",
+    "undeliverable", "delivery has failed", "non remis",
+)
+EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+
+
+def _decode_hdr(val: str) -> str:
+    if not val:
+        return ""
+    parts = decode_header(val)
+    out = []
+    for text, enc in parts:
+        if isinstance(text, bytes):
+            out.append(text.decode(enc or "utf-8", errors="replace"))
+        else:
+            out.append(str(text))
+    return "".join(out)
+
+
+def check_replies_and_bounces(
+    workspace_id: int = 1,
+    host: str = "",
+    port: int = 993,
+    username: str = "",
+    password: str = "",
+    max_messages: int = 80,
+) -> Dict[str, Any]:
+    if not host or not username or not password:
+        ws_imap = db.get_workspace_imap(workspace_id)
+        host = host or ws_imap.get("host", "")
+        port = port or ws_imap.get("port", 993)
+        username = username or ws_imap.get("username", "")
+        password = password or ws_imap.get("password", "")
+
+    if not host or not username or not password:
+        raise ValueError("Configuration IMAP manquante. Configurez votre boîte IMAP dans Admin / Marque blanche ou Séquences.")
+
+    with db.get_conn() as conn:
+        active_rows = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT e.id AS enrollment_id, e.sequence_id, c.id AS contact_id, LOWER(c.email) AS email
+                FROM sequence_enrollments e
+                JOIN contacts c ON c.id = e.contact_id
+                WHERE e.state = 'active'
+                """
+            ).fetchall()
+        ]
+
+    active_by_email: Dict[str, List[Dict[str, Any]]] = {}
+    for r in active_rows:
+        active_by_email.setdefault(r["email"], []).append(r)
+
+    if not active_by_email:
+        return {"scanned": 0, "replies_stopped": 0, "bounces_stopped": 0, "details": []}
+
+    imap = imaplib.IMAP4_SSL(host, int(port or 993), timeout=20)
+    replies_stopped = 0
+    bounces_stopped = 0
+    scanned = 0
+    details: List[Dict[str, str]] = []
+    now = datetime.now().isoformat(timespec="seconds")
+
+    try:
+        imap.login(username, password)
+        imap.select("INBOX", readonly=True)
+        status, data = imap.search(None, "ALL")
+        if status != "OK" or not data or not data[0]:
+            return {"scanned": 0, "replies_stopped": 0, "bounces_stopped": 0, "details": []}
+
+        msg_ids = data[0].split()[-max_messages:]
+        for mid in reversed(msg_ids):
+            scanned += 1
+            st, msg_data = imap.fetch(mid, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)] BODY.PEEK[TEXT]<0.2048>)")
+            if st != "OK" or not msg_data:
+                continue
+
+            raw_bytes = b""
+            for part in msg_data:
+                if isinstance(part, tuple) and len(part) > 1 and isinstance(part[1], bytes):
+                    raw_bytes += part[1] + b"\n"
+
+            msg = email_lib.message_from_bytes(raw_bytes)
+            from_hdr = _decode_hdr(msg.get("From", ""))
+            subj_hdr = _decode_hdr(msg.get("Subject", ""))
+            _, from_addr = parseaddr(from_hdr)
+            from_addr = (from_addr or "").strip().lower()
+            from_lower = from_hdr.lower()
+            subj_lower = subj_hdr.lower()
+
+            is_bounce = any(k in from_lower for k in BOUNCE_SENDERS) or any(k in subj_lower for k in BOUNCE_SUBJECT_HINTS)
+
+            if is_bounce:
+                body_text = raw_bytes.decode("utf-8", errors="ignore").lower()
+                found_emails = set(EMAIL_RE.findall(body_text))
+                for bounced_em in found_emails:
+                    if bounced_em in active_by_email and bounced_em != username.lower():
+                        targets = active_by_email.pop(bounced_em, [])
+                        with db.get_conn() as conn:
+                            for t in targets:
+                                conn.execute(
+                                    "UPDATE sequence_enrollments SET state = 'stopped_bounced', last_error = ? WHERE id = ?",
+                                    (f"Bounce détecté: {subj_hdr[:120]}", t["enrollment_id"]),
+                                )
+                                conn.execute(
+                                    "UPDATE contacts SET mx_status = 'invalid', updated_at = ? WHERE id = ?",
+                                    (now, t["contact_id"]),
+                                )
+                                conn.execute(
+                                    "INSERT INTO contact_activities (contact_id, kind, content, created_at) VALUES (?, 'email', ?, ?)",
+                                    (t["contact_id"], f"⚠️ Bounce détecté ({subj_hdr[:80]}) — séquence arrêtée automatiquement.", now),
+                                )
+                                bounces_stopped += 1
+                                details.append({"email": bounced_em, "type": "bounce", "subject": subj_hdr[:80]})
+            elif from_addr and from_addr in active_by_email:
+                targets = active_by_email.pop(from_addr, [])
+                with db.get_conn() as conn:
+                    for t in targets:
+                        conn.execute(
+                            "UPDATE sequence_enrollments SET state = 'stopped_replied', last_error = '' WHERE id = ?",
+                            (t["enrollment_id"],),
+                        )
+                        conn.execute(
+                            "UPDATE contacts SET status = CASE WHEN status IN ('new','contacted') THEN 'followup' ELSE status END, lead_score = MIN(100, COALESCE(lead_score, 0) + 15), last_contacted_at = ?, updated_at = ? WHERE id = ?",
+                            (now, now, t["contact_id"]),
+                        )
+                        conn.execute(
+                            "INSERT INTO contact_activities (contact_id, kind, content, created_at) VALUES (?, 'email', ?, ?)",
+                            (t["contact_id"], f"💬 Réponse email détectée ({subj_hdr[:80]}) — séquence arrêtée automatiquement.", now),
+                        )
+                        replies_stopped += 1
+                        details.append({"email": from_addr, "type": "reply", "subject": subj_hdr[:80]})
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+
+    return {
+        "scanned": scanned,
+        "replies_stopped": replies_stopped,
+        "bounces_stopped": bounces_stopped,
+        "details": details,
+    }
+
+
 _seq_scheduler_started = False
 
 
@@ -348,9 +532,16 @@ def start_sequence_scheduler(interval_seconds: int = 45) -> None:
     _seq_scheduler_started = True
 
     def _loop() -> None:
+        tick = 0
         while True:
             time.sleep(interval_seconds)
+            tick += 1
             try:
+                # Every ~5 minutes, auto-check IMAP replies & bounces if configured
+                if tick % 7 == 1:
+                    ws_imap = db.get_workspace_imap(1)
+                    if ws_imap.get("host") and ws_imap.get("username") and ws_imap.get("password"):
+                        check_replies_and_bounces(workspace_id=1)
                 process_due_sequences(max_batch=5, apply_delay=True)
             except Exception:
                 pass

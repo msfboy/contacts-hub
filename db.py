@@ -1,11 +1,75 @@
+import base64
+import hashlib
+import hmac
 import os
 import re
+import secrets
 import sqlite3
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "contacts.db")
+
+
+# ---------------- SECRET ENCRYPTION AT REST (STDLIB AUTHENTICATED CTR) ----------------
+
+def _get_master_key() -> bytes:
+    env_k = os.environ.get("CONTACTSHUB_MASTER_KEY", "").strip()
+    if env_k:
+        return hashlib.sha256(env_k.encode("utf-8")).digest()
+    with get_conn() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        row = conn.execute("SELECT value FROM app_settings WHERE key = 'master_enc_key'").fetchone()
+        if row and row["value"]:
+            return bytes.fromhex(row["value"])
+        raw = secrets.token_bytes(32)
+        conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('master_enc_key', ?)", (raw.hex(),))
+        return raw
+
+
+def _keystream(key: bytes, nonce: bytes, length: int) -> bytes:
+    out = bytearray()
+    counter = 0
+    while len(out) < length:
+        block = hashlib.sha256(key + nonce + counter.to_bytes(4, "big")).digest()
+        out.extend(block)
+        counter += 1
+    return bytes(out[:length])
+
+
+def encrypt_secret(plaintext: str) -> str:
+    if not plaintext:
+        return ""
+    if plaintext.startswith("enc1:"):
+        return plaintext
+    key = _get_master_key()
+    nonce = secrets.token_bytes(16)
+    pt = plaintext.encode("utf-8")
+    ks = _keystream(key, nonce, len(pt))
+    ct = bytes(a ^ b for a, b in zip(pt, ks))
+    mac = hmac.new(key, nonce + ct, hashlib.sha256).digest()[:16]
+    token = base64.urlsafe_b64encode(nonce + mac + ct).decode("ascii")
+    return f"enc1:{token}"
+
+
+def decrypt_secret(stored: str) -> str:
+    if not stored:
+        return ""
+    if not stored.startswith("enc1:"):
+        return stored  # Backward compatibility with legacy plaintext
+    try:
+        raw = base64.urlsafe_b64decode(stored[5:].encode("ascii"))
+        nonce, mac, ct = raw[:16], raw[16:32], raw[32:]
+        key = _get_master_key()
+        expected_mac = hmac.new(key, nonce + ct, hashlib.sha256).digest()[:16]
+        if not hmac.compare_digest(mac, expected_mac):
+            return ""
+        ks = _keystream(key, nonce, len(ct))
+        pt = bytes(a ^ b for a, b in zip(ct, ks))
+        return pt.decode("utf-8")
+    except Exception:
+        return ""
 
 GENERIC_PREFIXES = {
     "noreply", "no-reply", "no_reply", "donotreply", "do-not-reply",
@@ -89,10 +153,54 @@ def init_db() -> None:
             ("country", "TEXT DEFAULT ''"),
             ("industry", "TEXT DEFAULT ''"),
             ("company_desc", "TEXT DEFAULT ''"),
+            ("deal_value", "REAL DEFAULT 0"),
+            ("workspace_id", "INTEGER DEFAULT 1"),
         ]
         for col, ddl in migrations:
             if col not in existing_cols:
                 conn.execute(f"ALTER TABLE contacts ADD COLUMN {col} {ddl}")
+        conn.execute("UPDATE contacts SET workspace_id = 1 WHERE workspace_id IS NULL")
+        conn.execute("UPDATE contacts SET deal_value = 0 WHERE deal_value IS NULL")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workspaces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                tagline TEXT DEFAULT 'CRM & Centralisation Email',
+                logo_url TEXT DEFAULT '',
+                primary_color TEXT DEFAULT '#2563eb',
+                currency TEXT DEFAULT 'FCFA',
+                email_signature TEXT DEFAULT '',
+                public_base_url TEXT DEFAULT '',
+                imap_host TEXT DEFAULT '',
+                imap_port INTEGER DEFAULT 993,
+                imap_username TEXT DEFAULT '',
+                imap_password TEXT DEFAULT '',
+                plan TEXT DEFAULT 'pro',
+                onboarding_done INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        ws_cnt = conn.execute("SELECT COUNT(*) FROM workspaces").fetchone()[0]
+        if ws_cnt == 0:
+            now_ws = datetime.now().isoformat(timespec="seconds")
+            conn.execute(
+                """
+                INSERT INTO workspaces (
+                    id, slug, name, tagline, logo_url, primary_color, currency,
+                    email_signature, public_base_url, plan, onboarding_done, created_at
+                ) VALUES (1, 'msf-academy', ?, ?, '', '#0077e6', 'FCFA', ?, '', 'enterprise', 0, ?)
+                """,
+                (
+                    "MSF'S English Learning Academy",
+                    "CRM, Inscriptions & Croissance",
+                    "L'équipe MSF'S English Learning Academy\nLomé — Carrefour Adroukpapé, Avedji Limosine",
+                    now_ws,
+                ),
+            )
 
         conn.execute(
             """
@@ -484,6 +592,14 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_source ON contacts(source_type)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_type ON contacts(email_type)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_ws ON contacts(workspace_id)")
+
+        # Add workspace_id column safely to secondary tables for SaaS multi-tenancy
+        for tbl in ("lead_forms", "sequences", "smart_segments", "users"):
+            tcols = {r["name"] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
+            if "workspace_id" not in tcols:
+                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN workspace_id INTEGER DEFAULT 1")
+                conn.execute(f"UPDATE {tbl} SET workspace_id = 1 WHERE workspace_id IS NULL")
 
         # Seed a default welcome template if none exists
         cnt = conn.execute("SELECT COUNT(*) FROM email_templates").fetchone()[0]
@@ -502,6 +618,108 @@ def init_db() -> None:
                     now,
                 ),
             )
+
+
+def get_workspace(workspace_id: int = 1) -> Dict[str, Any]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
+        if not row:
+            row = conn.execute("SELECT * FROM workspaces ORDER BY id ASC LIMIT 1").fetchone()
+    if not row:
+        return {
+            "id": 1,
+            "slug": "msf-academy",
+            "name": "MSF'S English Learning Academy",
+            "tagline": "CRM, Inscriptions & Croissance",
+            "logo_url": "",
+            "primary_color": "#0077e6",
+            "currency": "FCFA",
+            "email_signature": "",
+            "public_base_url": "",
+            "imap_host": "",
+            "imap_port": 993,
+            "imap_username": "",
+            "imap_configured": False,
+            "plan": "enterprise",
+            "onboarding_done": 0,
+        }
+    d = dict(row)
+    d["imap_configured"] = bool(d.get("imap_host") and d.get("imap_username") and d.get("imap_password"))
+    d.pop("imap_password", None)
+    return d
+
+
+def get_workspace_imap(workspace_id: int = 1) -> Dict[str, Any]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT imap_host, imap_port, imap_username, imap_password FROM workspaces WHERE id = ?",
+            (workspace_id,),
+        ).fetchone()
+    if not row:
+        return {}
+    return {
+        "host": row["imap_host"] or "",
+        "port": int(row["imap_port"] or 993),
+        "username": row["imap_username"] or "",
+        "password": decrypt_secret(row["imap_password"] or ""),
+    }
+
+
+def list_workspaces() -> List[Dict[str, Any]]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT w.id, w.slug, w.name, w.tagline, w.logo_url, w.primary_color,
+                   w.currency, w.plan, w.onboarding_done, w.created_at,
+                   (SELECT COUNT(*) FROM contacts c WHERE COALESCE(c.workspace_id, 1) = w.id) AS contacts_count
+            FROM workspaces w
+            ORDER BY w.id ASC
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def create_workspace(name: str, tagline: str = "CRM & Croissance", primary_color: str = "#2563eb", currency: str = "FCFA", plan: str = "pro") -> Dict[str, Any]:
+    base_slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "workspace"
+    now = datetime.now().isoformat(timespec="seconds")
+    with get_conn() as conn:
+        slug = base_slug
+        n = 2
+        while conn.execute("SELECT 1 FROM workspaces WHERE slug = ?", (slug,)).fetchone():
+            slug = f"{base_slug}-{n}"
+            n += 1
+        cur = conn.execute(
+            """
+            INSERT INTO workspaces (slug, name, tagline, primary_color, currency, plan, onboarding_done, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+            """,
+            (slug, name.strip(), tagline.strip(), primary_color.strip() or "#2563eb", currency.strip() or "FCFA", plan.strip() or "pro", now),
+        )
+        ws_id = cur.lastrowid
+    return get_workspace(ws_id)
+
+
+def update_workspace(workspace_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+    fields = []
+    params: List[Any] = []
+    for col in ("name", "tagline", "logo_url", "primary_color", "currency", "email_signature", "public_base_url", "imap_host", "imap_username", "plan"):
+        if col in data and data[col] is not None:
+            fields.append(f"{col} = ?")
+            params.append(str(data[col]).strip())
+    if "imap_port" in data and data["imap_port"] is not None:
+        fields.append("imap_port = ?")
+        params.append(int(data["imap_port"] or 993))
+    if data.get("imap_password"):
+        fields.append("imap_password = ?")
+        params.append(encrypt_secret(str(data["imap_password"])))
+    if "onboarding_done" in data:
+        fields.append("onboarding_done = ?")
+        params.append(1 if data["onboarding_done"] else 0)
+    if fields:
+        params.append(workspace_id)
+        with get_conn() as conn:
+            conn.execute(f"UPDATE workspaces SET {', '.join(fields)} WHERE id = ?", params)
+    return get_workspace(workspace_id)
 
 
 def normalize_tags(tags_str: str) -> str:
@@ -529,6 +747,7 @@ def upsert_contacts(
     source_name: str,
     source_ref: str = "",
     extra_tag: str = "",
+    workspace_id: int = 1,
 ) -> Dict[str, Any]:
     now = datetime.now().isoformat(timespec="seconds")
     inserted = 0
@@ -556,6 +775,10 @@ def upsert_contacts(
             company = (rec.get("company") or "").strip()
             role = (rec.get("role") or "").strip()
             notes = (rec.get("notes") or "").strip()
+            try:
+                deal_value = float(rec.get("deal_value") or 0)
+            except (TypeError, ValueError):
+                deal_value = 0.0
             tags = merge_tags(rec.get("tags") or "", extra_tag)
             status = (rec.get("status") or "new").strip().lower()
             if status not in VALID_STATUSES:
@@ -573,13 +796,13 @@ def upsert_contacts(
                         email, first_name, last_name, full_name, phone,
                         company, role, tags, source_type, source_detail,
                         notes, status, email_type, mx_status, last_contacted_at,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unchecked', '', ?, ?)
+                        deal_value, workspace_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unchecked', '', ?, ?, ?, ?)
                     """,
                     (
                         email, first_name, last_name, full_name, phone,
                         company, role, tags, source_type, source_name,
-                        notes, status, email_type, now, now,
+                        notes, status, email_type, deal_value, workspace_id, now, now,
                     ),
                 )
                 inserted += 1
@@ -661,6 +884,7 @@ def query_contacts(
     country: str = "",
     min_score: int = 0,
     has_phone: bool = False,
+    workspace_id: Optional[int] = None,
     sort_by: str = "updated_desc",
     page: int = 1,
     per_page: int = 50,
@@ -668,6 +892,10 @@ def query_contacts(
 ) -> Tuple[List[Dict[str, Any]], int]:
     where = []
     params: List[Any] = []
+
+    if workspace_id is not None:
+        where.append("COALESCE(workspace_id, 1) = ?")
+        params.append(int(workspace_id))
 
     if q:
         like = f"%{q.strip()}%"
@@ -845,45 +1073,68 @@ def merge_contacts(primary_id: int, secondary_ids: List[int]) -> Dict[str, Any]:
     return {"merged": len(others), "primary_id": primary_id}
 
 
-def get_stats() -> Dict[str, Any]:
+def get_stats(workspace_id: Optional[int] = None) -> Dict[str, Any]:
+    ws_clause = " WHERE COALESCE(workspace_id, 1) = ?" if workspace_id is not None else ""
+    ws_and = " AND COALESCE(workspace_id, 1) = ?" if workspace_id is not None else ""
+    ws_params = (int(workspace_id),) if workspace_id is not None else ()
+
     with get_conn() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+        total = conn.execute(f"SELECT COUNT(*) FROM contacts{ws_clause}", ws_params).fetchone()[0]
         by_source = {
             r["source_type"]: r["cnt"]
             for r in conn.execute(
-                "SELECT source_type, COUNT(*) AS cnt FROM contacts GROUP BY source_type"
+                f"SELECT source_type, COUNT(*) AS cnt FROM contacts{ws_clause} GROUP BY source_type",
+                ws_params,
             ).fetchall()
         }
         by_status = {
             r["status"]: r["cnt"]
             for r in conn.execute(
-                "SELECT status, COUNT(*) AS cnt FROM contacts GROUP BY status"
+                f"SELECT status, COUNT(*) AS cnt FROM contacts{ws_clause} GROUP BY status",
+                ws_params,
             ).fetchall()
         }
+        pipeline_value_by_status = {
+            r["status"]: float(r["val"] or 0)
+            for r in conn.execute(
+                f"SELECT status, COALESCE(SUM(deal_value), 0) AS val FROM contacts{ws_clause} GROUP BY status",
+                ws_params,
+            ).fetchall()
+        }
+        pipeline_value_total = float(
+            conn.execute(
+                f"SELECT COALESCE(SUM(deal_value), 0) FROM contacts WHERE status != 'unsubscribed'{ws_and}",
+                ws_params,
+            ).fetchone()[0]
+            or 0
+        )
         by_email_type = {
             r["email_type"]: r["cnt"]
             for r in conn.execute(
-                "SELECT email_type, COUNT(*) AS cnt FROM contacts GROUP BY email_type"
+                f"SELECT email_type, COUNT(*) AS cnt FROM contacts{ws_clause} GROUP BY email_type",
+                ws_params,
             ).fetchall()
         }
         by_mx = {
             r["mx_status"]: r["cnt"]
             for r in conn.execute(
-                "SELECT mx_status, COUNT(*) AS cnt FROM contacts GROUP BY mx_status"
+                f"SELECT mx_status, COUNT(*) AS cnt FROM contacts{ws_clause} GROUP BY mx_status",
+                ws_params,
             ).fetchall()
         }
-        emails = [r["email"] for r in conn.execute("SELECT email FROM contacts").fetchall()]
+        emails = [r["email"] for r in conn.execute(f"SELECT email FROM contacts{ws_clause}", ws_params).fetchall()]
         tags_rows = [
             r["tags"]
-            for r in conn.execute("SELECT tags FROM contacts WHERE tags != ''").fetchall()
+            for r in conn.execute(f"SELECT tags FROM contacts WHERE tags != ''{ws_and}", ws_params).fetchall()
         ]
         imports_count = conn.execute("SELECT COUNT(*) FROM import_logs").fetchone()[0]
-        avg_score = conn.execute("SELECT COALESCE(ROUND(AVG(lead_score)), 0) FROM contacts").fetchone()[0]
-        hot_leads = conn.execute("SELECT COUNT(*) FROM contacts WHERE lead_score >= 60").fetchone()[0]
+        avg_score = conn.execute(f"SELECT COALESCE(ROUND(AVG(lead_score)), 0) FROM contacts{ws_clause}", ws_params).fetchone()[0]
+        hot_leads = conn.execute(f"SELECT COUNT(*) FROM contacts WHERE lead_score >= 60{ws_and}", ws_params).fetchone()[0]
         top_countries = [
             {"country": r["country"], "count": r["cnt"]}
             for r in conn.execute(
-                "SELECT country, COUNT(*) AS cnt FROM contacts WHERE country != '' GROUP BY country ORDER BY cnt DESC LIMIT 20"
+                f"SELECT country, COUNT(*) AS cnt FROM contacts WHERE country != ''{ws_and} GROUP BY country ORDER BY cnt DESC LIMIT 20",
+                ws_params,
             ).fetchall()
         ]
         recent_imports = [
@@ -915,6 +1166,8 @@ def get_stats() -> Dict[str, Any]:
         "imports_count": imports_count,
         "by_source": by_source,
         "by_status": by_status,
+        "pipeline_value_total": pipeline_value_total,
+        "pipeline_value_by_status": pipeline_value_by_status,
         "by_email_type": by_email_type,
         "by_mx": by_mx,
         "avg_score": int(avg_score or 0),

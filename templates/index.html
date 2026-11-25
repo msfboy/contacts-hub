@@ -14,12 +14,22 @@
   <div class="app-shell">
     <!-- Sidebar -->
     <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-icon">@</div>
-        <div>
-          <div class="brand-name">ContactsHub</div>
-          <div class="brand-sub">CRM & Centralisation Email</div>
+      <div class="brand" id="brandHeader">
+        <div class="brand-icon" id="brandIcon">@</div>
+        <div style="min-width:0;flex:1;">
+          <div class="brand-name" id="brandName" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">ContactsHub</div>
+          <div class="brand-sub" id="brandTagline" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">CRM & Centralisation Email</div>
         </div>
+      </div>
+
+      <div style="padding:0 14px 12px;display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;gap:6px;align-items:center;">
+          <select id="workspaceSwitcher" class="select input-sm" style="flex:1;font-size:12px;background:rgba(255,255,255,0.08);color:inherit;border-color:rgba(255,255,255,0.16);" title="Changer d'espace client SaaS">
+            <option value="1">MSF'S English Learning Academy</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" id="quickNewWsBtn" title="Créer un nouvel espace client SaaS" style="padding:4px 8px;">+</button>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="openOnboardingBtn" style="width:100%;font-size:11.5px;justify-content:center;">🚀 Assistant de démarrage</button>
       </div>
 
       <nav class="nav">
@@ -276,21 +286,36 @@
             <button class="btn btn-primary btn-sm" id="kanbanApplyBtn">Filtrer</button>
           </div>
 
+          <div class="stats-grid" style="margin-bottom:14px;">
+            <div class="stat-card">
+              <div class="stat-label">💰 CA Prévisionnel Total (Pipeline)</div>
+              <div class="stat-value" id="kanbanTotalValue">0 FCFA</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">🏆 CA Clients Signés</div>
+              <div class="stat-value" id="kanbanWonValue" style="color:#16a34a;">0 FCFA</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">🔥 En cours (Contacté + Relance)</div>
+              <div class="stat-value" id="kanbanActiveValue" style="color:#d97706;">0 FCFA</div>
+            </div>
+          </div>
+
           <div class="kanban-board">
             <div class="kanban-col" data-stage="new">
-              <div class="kanban-col-header"><span>🆕 Nouveau</span><span class="badge badge-st-new" id="kCount-new">0</span></div>
+              <div class="kanban-col-header"><span>🆕 Nouveau</span><div style="display:flex;gap:6px;align-items:center;"><span class="badge badge-manual" id="kVal-new">0</span><span class="badge badge-st-new" id="kCount-new">0</span></div></div>
               <div class="kanban-cards" id="kCol-new"></div>
             </div>
             <div class="kanban-col" data-stage="contacted">
-              <div class="kanban-col-header"><span>📨 Contacté</span><span class="badge badge-st-contacted" id="kCount-contacted">0</span></div>
+              <div class="kanban-col-header"><span>📨 Contacté</span><div style="display:flex;gap:6px;align-items:center;"><span class="badge badge-manual" id="kVal-contacted">0</span><span class="badge badge-st-contacted" id="kCount-contacted">0</span></div></div>
               <div class="kanban-cards" id="kCol-contacted"></div>
             </div>
             <div class="kanban-col" data-stage="followup">
-              <div class="kanban-col-header"><span>⏰ À relancer</span><span class="badge badge-st-followup" id="kCount-followup">0</span></div>
+              <div class="kanban-col-header"><span>⏰ À relancer</span><div style="display:flex;gap:6px;align-items:center;"><span class="badge badge-manual" id="kVal-followup">0</span><span class="badge badge-st-followup" id="kCount-followup">0</span></div></div>
               <div class="kanban-cards" id="kCol-followup"></div>
             </div>
             <div class="kanban-col" data-stage="client">
-              <div class="kanban-col-header"><span>🏆 Client</span><span class="badge badge-st-client" id="kCount-client">0</span></div>
+              <div class="kanban-col-header"><span>🏆 Client</span><div style="display:flex;gap:6px;align-items:center;"><span class="badge badge-manual" id="kVal-client">0</span><span class="badge badge-st-client" id="kCount-client">0</span></div></div>
               <div class="kanban-cards" id="kCol-client"></div>
             </div>
           </div>
@@ -1000,8 +1025,22 @@ Virement</textarea></label>
                 <label class="field full"><span>Nom du modèle</span><input type="text" id="tplName" class="input" placeholder="Ex: Relance prospects" /></label>
                 <label class="field full"><span>Objet</span><input type="text" id="tplSubject" class="input" placeholder="Bonjour {prenom}, ..." /></label>
                 <label class="field full">
-                  <span>Message (variables : <code>{prenom}</code> <code>{nom}</code> <code>{nom_complet}</code> <code>{entreprise}</code> <code>{email}</code>)</span>
-                  <textarea id="tplBody" class="input" rows="8"></textarea>
+                  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+                    <span>Message (variables : <code>{prenom}</code> <code>{nom}</code> <code>{entreprise}</code>)</span>
+                    <button type="button" class="btn btn-ghost btn-sm" id="toggleWysiwygModeBtn" style="font-size:11.5px;padding:2px 8px;">&lt;/&gt; Mode HTML</button>
+                  </div>
+                  <div class="wysiwyg-toolbar" id="wysiwygToolbar">
+                    <button type="button" data-cmd="bold" title="Gras"><b>G</b></button>
+                    <button type="button" data-cmd="italic" title="Italique"><i>I</i></button>
+                    <button type="button" data-cmd="underline" title="Souligné"><u>S</u></button>
+                    <button type="button" data-cmd="insertUnorderedList" title="Liste à puces">• Liste</button>
+                    <button type="button" id="wyInsertLinkBtn" title="Insérer un lien">🔗 Lien</button>
+                    <button type="button" id="wyInsertCtaBtn" title="Insérer un bouton d'action">🔘 Bouton CTA</button>
+                    <button type="button" data-var="{prenom}" title="Prénom">{prenom}</button>
+                    <button type="button" data-var="{entreprise}" title="Entreprise">{entreprise}</button>
+                  </div>
+                  <div id="tplBodyVisual" class="wysiwyg-editor" contenteditable="true" placeholder="Rédigez votre email ici…"></div>
+                  <textarea id="tplBody" class="input hidden" rows="8"></textarea>
                 </label>
               </div>
               <div style="display:flex;gap:8px;margin-top:12px;">
@@ -1049,7 +1088,10 @@ Virement</textarea></label>
           <div class="card" style="padding:18px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
               <h3 style="margin:0;">Créer une séquence automatisée (Drip Campaign)</h3>
-              <button class="btn btn-secondary btn-sm" id="runSequencesNowBtn">▶ Exécuter les envois dus maintenant</button>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button class="btn btn-secondary btn-sm" id="checkSeqRepliesBtn" title="Scanne la boîte IMAP et stoppe automatiquement les relances si le prospect a répondu ou en cas de bounce">📥 Vérifier réponses &amp; bounces (IMAP)</button>
+                <button class="btn btn-secondary btn-sm" id="runSequencesNowBtn">▶ Exécuter les envois dus maintenant</button>
+              </div>
             </div>
             <div class="form-grid">
               <label class="field"><span>Nom de la séquence</span><input type="text" id="seqName" class="input" placeholder="Ex: Prospection B2B 3 étapes" /></label>
@@ -1209,6 +1251,62 @@ Virement</textarea></label>
           </div>
         </header>
 
+        <!-- SaaS Multi-Tenant & White-Label Branding -->
+        <div class="card" style="padding:18px;margin-bottom:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+            <div>
+              <h3 style="margin:0 0 4px;">🎨 Espace SaaS, Marque Blanche &amp; IMAP Auto-Stop</h3>
+              <p class="subtitle">Personnalisez l'identité de l'espace actif (nom, logo, couleur, devise, signature) et configurez la boîte IMAP pour stopper automatiquement les séquences sur réponse ou bounce.</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-secondary btn-sm" id="adminOpenOnboardingBtn">🚀 Relancer l'assistant</button>
+              <button class="btn btn-primary btn-sm" id="saveBrandingBtn">💾 Enregistrer la Marque Blanche</button>
+            </div>
+          </div>
+          <div class="form-grid">
+            <label class="field"><span>Nom de l'entreprise / Espace</span><input type="text" id="wsName" class="input" placeholder="Ex: MSF'S English Learning Academy" /></label>
+            <label class="field"><span>Sous-titre / Slogan</span><input type="text" id="wsTagline" class="input" placeholder="CRM, Inscriptions & Croissance" /></label>
+            <label class="field"><span>URL du Logo (optionnel)</span><input type="url" id="wsLogoUrl" class="input" placeholder="https://.../logo.png" /></label>
+            <label class="field">
+              <span>Couleur principale</span>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input type="color" id="wsPrimaryColor" value="#0077e6" style="width:44px;height:36px;border:1px solid #cbd5e1;border-radius:8px;cursor:pointer;" />
+                <input type="text" id="wsPrimaryColorHex" class="input" value="#0077e6" style="flex:1;" />
+              </div>
+            </label>
+            <label class="field">
+              <span>Devise Pipeline CRM</span>
+              <select id="wsCurrency" class="select">
+                <option value="FCFA">FCFA (XOF / XAF)</option>
+                <option value="€">Euro (€)</option>
+                <option value="$">Dollar ($)</option>
+                <option value="MAD">Dirham (MAD)</option>
+              </select>
+            </label>
+            <label class="field"><span>Domaine public SaaS (tracking &amp; désinscription)</span><input type="url" id="wsPublicBaseUrl" class="input" placeholder="https://crm.votre-domaine.com" /></label>
+            <label class="field full"><span>Signature email automatique (ajoutée aux séquences)</span><textarea id="wsEmailSignature" class="input" rows="2" placeholder="L'équipe MSF'S English Learning Academy&#10;Lomé — Carrefour Adroukpapé"></textarea></label>
+          </div>
+          <hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;" />
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px;">📥 Boîte IMAP pour arrêt automatique des séquences (Réponses &amp; Bounces)</div>
+          <div class="form-grid">
+            <label class="field"><span>Serveur IMAP</span><input type="text" id="wsImapHost" class="input" placeholder="imap.gmail.com" /></label>
+            <label class="field"><span>Port IMAP</span><input type="number" id="wsImapPort" class="input" value="993" /></label>
+            <label class="field"><span>Email IMAP</span><input type="email" id="wsImapUser" class="input" placeholder="contact@msf-academy.com" /></label>
+            <label class="field"><span>Mot de passe d'application (chiffré)</span><input type="password" id="wsImapPass" class="input" placeholder="Laisser vide pour conserver" /></label>
+          </div>
+          <hr style="border:none;border-top:1px solid #e2e8f0;margin:14px 0;" />
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+            <div>
+              <strong style="font-size:13px;">🏢 Espaces Clients SaaS (Multi-Tenant)</strong>
+              <div class="subtitle" id="wsListSummary">Chargement des espaces…</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="text" id="newWsNameInput" class="input input-sm" placeholder="Nom du nouveau client SaaS…" style="width:220px;" />
+              <button class="btn btn-secondary btn-sm" id="createWorkspaceBtn">+ Créer espace client</button>
+            </div>
+          </div>
+        </div>
+
         <div class="quality-grid">
           <!-- Auth & Users -->
           <div class="card quality-card">
@@ -1312,7 +1410,8 @@ Virement</textarea></label>
           <label class="field"><span>Téléphone</span><input type="text" id="fPhone" class="input" /></label>
           <label class="field"><span>Entreprise</span><input type="text" id="fCompany" class="input" /></label>
           <label class="field"><span>Poste / Fonction</span><input type="text" id="fRole" class="input" /></label>
-          <label class="field"><span>Tags (virgules)</span><input type="text" id="fTags" class="input" placeholder="Clients, VIP, 2026" /></label>
+          <label class="field"><span>💰 Valeur opportunité (CA)</span><input type="number" id="fDealValue" class="input" min="0" step="1000" placeholder="Ex: 35000" /></label>
+          <label class="field full"><span>Tags (virgules)</span><input type="text" id="fTags" class="input" placeholder="Clients, VIP, 2026" /></label>
           <label class="field full"><span>Notes</span><textarea id="fNotes" class="input" rows="3"></textarea></label>
         </div>
         <div class="modal-footer">
@@ -1385,6 +1484,74 @@ Virement</textarea></label>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" id="closePreviewBtn2">Fermer</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Onboarding Wizard Modal (3 steps) -->
+  <div class="modal-backdrop hidden" id="onboardingModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div>
+          <h2>🚀 Assistant de démarrage SaaS</h2>
+          <div class="subtitle" style="font-size:12.5px;">Configurez votre espace en 3 étapes rapides (prêt pour MSF'S English Learning Academy ou un nouveau client).</div>
+        </div>
+        <button class="icon-btn" id="closeOnboardingBtn">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="onboarding-steps">
+          <div class="ob-step active" data-ob="1">1. Identité &amp; Marque Blanche</div>
+          <div class="ob-step" data-ob="2">2. Contacts &amp; Formulaires</div>
+          <div class="ob-step" data-ob="3">3. Emailing SMTP &amp; Auto-Stop</div>
+        </div>
+
+        <div class="ob-panel" id="obPanel1">
+          <div class="form-grid">
+            <label class="field"><span>Nom de l'organisation</span><input type="text" id="obName" class="input" /></label>
+            <label class="field"><span>Slogan</span><input type="text" id="obTagline" class="input" /></label>
+            <label class="field"><span>Couleur de marque</span><input type="color" id="obColor" value="#0077e6" style="width:60px;height:36px;border:1px solid #cbd5e1;border-radius:8px;" /></label>
+            <label class="field">
+              <span>Devise du Pipeline</span>
+              <select id="obCurrency" class="select">
+                <option value="FCFA">FCFA</option>
+                <option value="€">€</option>
+                <option value="$">$</option>
+              </select>
+            </label>
+            <label class="field full"><span>URL publique SaaS (ex: https://crm.msf-academy.com)</span><input type="url" id="obBaseUrl" class="input" placeholder="Optionnel en local, recommandé en production" /></label>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-primary" id="obNext1Btn">Enregistrer &amp; Étape 2 →</button>
+          </div>
+        </div>
+
+        <div class="ob-panel hidden" id="obPanel2">
+          <div class="info-box" style="margin-bottom:14px;">
+            <strong>Votre base actuelle :</strong> <span id="obContactsSummary">Chargement…</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
+            <button type="button" class="btn btn-secondary" id="obGoLocalBtn">💻 Importer depuis le PC (Excel/CSV)</button>
+            <button type="button" class="btn btn-secondary" id="obGoFormsBtn">🎓 Voir / Partager Formulaires Formation</button>
+            <button type="button" class="btn btn-secondary" id="obGoPipelineBtn">📌 Ouvrir le Pipeline CRM (CA)</button>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-ghost" id="obPrev2Btn">← Retour</button>
+            <button type="button" class="btn btn-primary" id="obNext2Btn">Étape 3 →</button>
+          </div>
+        </div>
+
+        <div class="ob-panel hidden" id="obPanel3">
+          <p class="subtitle" style="margin-bottom:10px;">Configurez votre boîte IMAP pour que les séquences s'arrêtent automatiquement dès qu'un prospect répond ou si un email rebondit (bounce).</p>
+          <div class="form-grid">
+            <label class="field"><span>Serveur IMAP</span><input type="text" id="obImapHost" class="input" placeholder="imap.gmail.com" /></label>
+            <label class="field"><span>Email IMAP</span><input type="email" id="obImapUser" class="input" placeholder="contact@votre-ecole.com" /></label>
+            <label class="field full"><span>Mot de passe d'application IMAP (chiffré en base)</span><input type="password" id="obImapPass" class="input" placeholder="Laisser vide si déjà configuré" /></label>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-ghost" id="obPrev3Btn">← Retour</button>
+            <button type="button" class="btn btn-primary" id="obFinishBtn">✅ Terminer la configuration</button>
+          </div>
         </div>
       </div>
     </div>
