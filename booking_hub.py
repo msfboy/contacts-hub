@@ -127,7 +127,7 @@ def create_appointment(data: Dict[str, Any]) -> Dict[str, Any]:
                 (cid, f"📅 RDV confirmé ({booking_ref}) : {topic} ({mode}) le {appt_date} à {appt_time}", now),
             )
             conn.execute(
-                "INSERT INTO crm_tasks (contact_id, title, due_date, done, created_at) VALUES (?, ?, ?, 0, ?)",
+                "INSERT INTO contact_tasks (contact_id, title, due_date, done, created_at) VALUES (?, ?, ?, 0, ?)",
                 (cid, f"RDV {appt_time} — {topic} ({full_name})", appt_date, now),
             )
 

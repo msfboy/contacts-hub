@@ -1039,53 +1039,103 @@ Virement</textarea></label>
         </div>
       </section>
 
-      <!-- TAB 2: DASHBOARD & BACKUP -->
+      <!-- TAB 2: EXECUTIVE COMMERCIAL DASHBOARD & BACKUP -->
       <section class="tab-panel" id="tab-dashboard">
         <header class="page-header">
           <div>
-            <h1>Tableau de bord & Sauvegardes</h1>
-            <p class="subtitle">Vue analytique de votre base de contacts et sauvegarde sécurisée en un clic.</p>
+            <h1>Tableau de bord — Centre de Pilotage Commercial</h1>
+            <p class="subtitle">Trésorerie, pipeline CA, acquisition multicanale, prospects chauds et agenda du jour en un coup d'œil.</p>
           </div>
-          <div class="header-actions">
-            <a class="btn btn-secondary" href="/api/backup/download">⬇ Télécharger backup (.db)</a>
-            <button class="btn btn-primary" id="backupDriveBtn">☁️ Sauvegarder sur Google Drive</button>
+          <div class="header-actions" style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" id="dashRefreshBtn">↻ Actualiser</button>
+            <a class="btn btn-secondary btn-sm" href="/api/backup/download">⬇ Backup (.db)</a>
+            <button class="btn btn-primary btn-sm" id="backupDriveBtn">☁️ Backup Drive</button>
           </div>
         </header>
 
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-label">Total contacts</div>
-            <div class="stat-value" id="dashTotal">0</div>
+        <!-- Quick Commercial Shortcuts -->
+        <div class="dash-quickbar">
+          <button class="btn btn-secondary btn-sm" onclick="switchTab('conversion')">💬 Ouvrir WhatsApp Interne</button>
+          <button class="btn btn-secondary btn-sm" onclick="switchTab('payments')">💰 Enregistrer un Paiement</button>
+          <button class="btn btn-secondary btn-sm" onclick="switchTab('booking')">📅 Gérer les RDV</button>
+          <a class="btn btn-secondary btn-sm" href="/rdv" target="_blank">🔗 Page publique RDV</a>
+          <button class="btn btn-secondary btn-sm" onclick="switchTab('crm')">📌 Pipeline Kanban</button>
+        </div>
+
+        <!-- 6 Executive KPI Cards -->
+        <div class="dash-kpi-grid">
+          <div class="card dash-kpi accent-green">
+            <div class="dash-kpi-top"><span>💰 Total encaissé</span><span class="dash-kpi-pill" id="dashPayCount">0 reçu</span></div>
+            <div class="dash-kpi-val" id="dashCollected">0 FCFA</div>
+            <div class="dash-kpi-sub" id="dashRemaining">Reste à recouvrer : 0 FCFA</div>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">Domaines uniques</div>
-            <div class="stat-value" id="dashDomains">0</div>
+          <div class="card dash-kpi accent-blue">
+            <div class="dash-kpi-top"><span>📈 CA Pipeline en cours</span><span class="dash-kpi-pill" id="dashConvRate">0% closing</span></div>
+            <div class="dash-kpi-val" id="dashPipeline">0 FCFA</div>
+            <div class="dash-kpi-sub" id="dashClientsSub">0 client(s) actif(s)</div>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">MX Valides</div>
-            <div class="stat-value" id="dashMxValid">0</div>
+          <div class="card dash-kpi accent-amber">
+            <div class="dash-kpi-top"><span>🔥 Prospects chauds</span><span class="dash-kpi-pill" id="dashTotalPill">0 contacts</span></div>
+            <div class="dash-kpi-val" id="dashHotLeads">0</div>
+            <div class="dash-kpi-sub">Score ≥ 70 prêts à closer</div>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">Imports réalisés</div>
-            <div class="stat-value" id="dashImports">0</div>
+          <div class="card dash-kpi accent-purple">
+            <div class="dash-kpi-top"><span>📅 RDV à venir</span><span class="dash-kpi-pill">Tests Niveau</span></div>
+            <div class="dash-kpi-val" id="dashUpcomingAppts">0</div>
+            <div class="dash-kpi-sub">Confirmés dans l'agenda</div>
+          </div>
+          <div class="card dash-kpi accent-teal">
+            <div class="dash-kpi-top"><span>⚡ Activité (7 jours)</span><span class="dash-kpi-pill">Multicanal</span></div>
+            <div class="dash-kpi-val" id="dashActivity7d">0</div>
+            <div class="dash-kpi-sub" id="dashActivityBreak">0 WA · 0 appels · 0 emails</div>
+          </div>
+          <div class="card dash-kpi accent-slate">
+            <div class="dash-kpi-top"><span>✉️ Santé Base Email</span><span class="dash-kpi-pill" id="dashImportsPill">0 imports</span></div>
+            <div class="dash-kpi-val" id="dashMxValid">0</div>
+            <div class="dash-kpi-sub" id="dashDomainsSub">MX valides · 0 domaines</div>
           </div>
         </div>
 
+        <!-- Actionable Cockpit Row: Top Hot Leads + Agenda & Reminders -->
+        <div class="emailing-grid" style="margin-bottom:18px;">
+          <div class="card" style="padding:18px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <h3 style="margin:0;">🔥 Top Prospects Chauds à contacter maintenant</h3>
+              <button class="btn btn-ghost btn-sm" onclick="switchTab('contacts')">Voir tous →</button>
+            </div>
+            <div id="dashHotLeadsList" class="dash-action-list">
+              <div class="empty-cell">Chargement…</div>
+            </div>
+          </div>
+
+          <div class="card" style="padding:18px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <h3 style="margin:0;">📅 Prochains RDV & ⏰ Rappels prioritaires</h3>
+              <button class="btn btn-ghost btn-sm" onclick="switchTab('booking')">Agenda →</button>
+            </div>
+            <div id="dashAgendaList" class="dash-action-list">
+              <div class="empty-cell">Aucun RDV ni rappel en attente.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Charts Grid -->
         <div class="charts-grid">
           <div class="card chart-card">
-            <h3>Répartition Pro / Perso / Générique</h3>
-            <div class="chart-box"><canvas id="chartEmailType"></canvas></div>
+            <h3>🎯 Entonnoir de Conversion Commerciale</h3>
+            <div class="chart-box"><canvas id="chartFunnel"></canvas></div>
           </div>
           <div class="card chart-card">
-            <h3>Contacts par Source</h3>
+            <h3>📣 Acquisition par Canal (WhatsApp, FB, TikTok, Maps…)</h3>
             <div class="chart-box"><canvas id="chartSource"></canvas></div>
           </div>
           <div class="card chart-card">
-            <h3>Statuts CRM</h3>
-            <div class="chart-box"><canvas id="chartStatus"></canvas></div>
+            <h3>💳 Encaissements par Mode de Paiement</h3>
+            <div class="chart-box"><canvas id="chartPayMethods"></canvas></div>
           </div>
           <div class="card chart-card">
-            <h3>Top Domaines Email</h3>
+            <h3>✉️ Qualité Email & Top Domaines</h3>
+            <div class="chart-box" style="height:170px;margin-bottom:10px;"><canvas id="chartEmailType"></canvas></div>
             <div id="topDomainsList" class="domains-list"></div>
           </div>
         </div>

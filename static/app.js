@@ -146,73 +146,194 @@ async function loadStats() {
 }
 
 async function loadDashboard() {
-  const s = await loadStats();
-  if (!s) return;
+  try {
+    const data = await api("/api/dashboard/executive");
+    const s = data.stats || {};
+    const k = data.kpis || {};
+    const cur = data.workspace?.currency || "FCFA";
+    const fmtM = (v) => `${Math.round(Number(v || 0)).toLocaleString("fr-FR")} ${cur}`;
 
-  $("dashTotal").textContent = s.total_contacts;
-  $("dashDomains").textContent = s.unique_domains;
-  $("dashMxValid").textContent = s.by_mx.valid || 0;
-  $("dashImports").textContent = s.imports_count;
+    if ($("dashCollected")) $("dashCollected").textContent = fmtM(k.total_collected);
+    if ($("dashRemaining")) $("dashRemaining").textContent = `Reste à recouvrer : ${fmtM(k.total_remaining)}`;
+    if ($("dashPayCount")) $("dashPayCount").textContent = `${k.payments_count || 0} reçu(s)`;
+    if ($("dashPipeline")) $("dashPipeline").textContent = fmtM(k.pipeline_value);
+    if ($("dashConvRate")) $("dashConvRate").textContent = `${k.conversion_rate || 0}% closing`;
+    if ($("dashClientsSub")) $("dashClientsSub").textContent = `${k.clients_count || 0} client(s) actif(s)`;
+    if ($("dashHotLeads")) $("dashHotLeads").textContent = String(k.hot_leads || 0);
+    if ($("dashTotalPill")) $("dashTotalPill").textContent = `${k.total_contacts || 0} contacts`;
+    if ($("dashUpcomingAppts")) $("dashUpcomingAppts").textContent = String(k.upcoming_appts_count || 0);
+    const totalAct = (k.wa_messages_7d || 0) + (k.calls_7d || 0) + (k.emails_7d || 0);
+    if ($("dashActivity7d")) $("dashActivity7d").textContent = String(totalAct);
+    if ($("dashActivityBreak")) $("dashActivityBreak").textContent = `${k.wa_messages_7d || 0} WA · ${k.calls_7d || 0} appels · ${k.emails_7d || 0} emails`;
+    if ($("dashMxValid")) $("dashMxValid").textContent = String((s.by_mx || {}).valid || 0);
+    if ($("dashDomainsSub")) $("dashDomainsSub").textContent = `MX valides · ${s.unique_domains || 0} domaines`;
+    if ($("dashImportsPill")) $("dashImportsPill").textContent = `${s.imports_count || 0} imports`;
 
-  $("topDomainsList").innerHTML = s.top_domains.length
-    ? s.top_domains
-        .map((d) => `<div class="domain-row"><span>@${esc(d.domain)}</span><strong>${d.count}</strong></div>`)
-        .join("")
-    : '<div class="empty-cell">Aucun domaine pour le moment.</div>';
+    // Actionable Hot Leads List
+    const hotBox = $("dashHotLeadsList");
+    const hotItems = data.top_hot_leads || [];
+    if (hotBox) {
+      hotBox.innerHTML = hotItems.length
+        ? hotItems
+            .map(
+              (c) => `
+              <div class="dash-action-row">
+                <div style="min-width:0;">
+                  <div style="font-weight:600;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(c.full_name || c.email)} ${scoreBadge(c.lead_score)}</div>
+                  <div class="contact-role">${esc([c.company, c.phone || c.email, c.deal_value > 0 ? fmtM(c.deal_value) : ""].filter(Boolean).join(" · "))}</div>
+                </div>
+                <div style="display:flex;gap:4px;flex-shrink:0;">
+                  ${c.phone ? `<button class="icon-btn dash-hot-call" data-idx="${c.id}" title="Appeler">📞</button>` : ""}
+                  ${c.phone ? `<button class="icon-btn dash-hot-wa" data-idx="${c.id}" title="WhatsApp interne">💬</button>` : ""}
+                  <button class="icon-btn dash-hot-prof" data-idx="${c.id}" title="Fiche 360°">👁</button>
+                </div>
+              </div>
+            `
+            )
+            .join("")
+        : '<div class="empty-cell">Aucun prospect chaud en attente.</div>';
 
-  if (typeof Chart === "undefined") return;
+      hotBox.querySelectorAll(".dash-hot-call").forEach((b) => {
+        b.addEventListener("click", () => {
+          const c = hotItems.find((x) => x.id === Number(b.dataset.idx));
+          if (c) callContact(c);
+        });
+      });
+      hotBox.querySelectorAll(".dash-hot-wa").forEach((b) => {
+        b.addEventListener("click", () => {
+          const c = hotItems.find((x) => x.id === Number(b.dataset.idx));
+          if (c) openWhatsAppForContact(c);
+        });
+      });
+      hotBox.querySelectorAll(".dash-hot-prof").forEach((b) => {
+        b.addEventListener("click", () => openProfileModal(Number(b.dataset.idx)));
+      });
+    }
 
-  const renderChart = (key, canvasId, config) => {
-    if (state.charts[key]) state.charts[key].destroy();
-    state.charts[key] = new Chart($(canvasId), config);
-  };
+    // Actionable Agenda & Reminders List
+    const agBox = $("dashAgendaList");
+    if (agBox) {
+      const rows = [];
+      (data.upcoming_appointments || []).forEach((a) => {
+        rows.push(`
+          <div class="dash-action-row">
+            <div>
+              <div style="font-weight:600;font-size:13px;">📅 ${esc(a.appointment_date)} à ${esc(a.appointment_time)} — ${esc(a.full_name)}</div>
+              <div class="contact-role">${esc(a.topic)} · ${esc(a.mode)} · ${esc(a.phone)}</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="switchTab('booking')">Voir</button>
+          </div>
+        `);
+      });
+      (data.pending_tasks || []).forEach((t) => {
+        rows.push(`
+          <div class="dash-action-row">
+            <div>
+              <div style="font-weight:600;font-size:13px;">⏰ ${esc(t.due_date)} — ${esc(t.title)}</div>
+              <div class="contact-role">${esc(t.full_name || t.email || "Rappel CRM")}</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="switchTab('crm')">CRM</button>
+          </div>
+        `);
+      });
+      agBox.innerHTML = rows.length ? rows.join("") : '<div class="empty-cell">Aucun rendez-vous ni rappel en attente.</div>';
+    }
 
-  renderChart("type", "chartEmailType", {
-    type: "doughnut",
-    data: {
-      labels: ["Professionnel", "Personnel", "Générique"],
-      datasets: [{
-        data: [s.by_email_type.pro || 0, s.by_email_type.perso || 0, s.by_email_type.generic || 0],
-        backgroundColor: ["#6366f1", "#0ea5e9", "#f59e0b"],
-      }],
-    },
-    options: { maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } },
-  });
+    $("topDomainsList").innerHTML = (s.top_domains || []).length
+      ? s.top_domains
+          .slice(0, 5)
+          .map((d) => `<div class="domain-row"><span>@${esc(d.domain)}</span><strong>${d.count}</strong></div>`)
+          .join("")
+      : '<div class="empty-cell">Aucun domaine pour le moment.</div>';
 
-  renderChart("source", "chartSource", {
-    type: "bar",
-    data: {
-      labels: ["Google Drive", "PC", "Upload", "Manuel"],
-      datasets: [{
-        label: "Contacts",
-        data: [s.by_source.gdrive || 0, s.by_source.pc || 0, s.by_source.upload || 0, s.by_source.manual || 0],
-        backgroundColor: ["#06b6d4", "#22c55e", "#eab308", "#94a3b8"],
-        borderRadius: 6,
-      }],
-    },
-    options: { maintainAspectRatio: false, plugins: { legend: { display: false } } },
-  });
+    if (typeof Chart === "undefined") return;
 
-  renderChart("status", "chartStatus", {
-    type: "bar",
-    data: {
-      labels: ["Nouveau", "Contacté", "Client", "À relancer", "Désinscrit"],
-      datasets: [{
-        label: "Contacts",
-        data: [
-          s.by_status.new || 0,
-          s.by_status.contacted || 0,
-          s.by_status.client || 0,
-          s.by_status.followup || 0,
-          s.by_status.unsubscribed || 0,
-        ],
-        backgroundColor: ["#64748b", "#3b82f6", "#16a34a", "#f59e0b", "#ef4444"],
-        borderRadius: 6,
-      }],
-    },
-    options: { maintainAspectRatio: false, plugins: { legend: { display: false } } },
-  });
+    const renderChart = (key, canvasId, config) => {
+      if (state.charts[key]) state.charts[key].destroy();
+      const el = $(canvasId);
+      if (el) state.charts[key] = new Chart(el, config);
+    };
+
+    // 1. Conversion Funnel (Horizontal Bar)
+    const funnel = data.funnel || [];
+    renderChart("funnel", "chartFunnel", {
+      type: "bar",
+      data: {
+        labels: funnel.map((f) => f.label),
+        datasets: [{
+          label: "Contacts",
+          data: funnel.map((f) => f.count),
+          backgroundColor: funnel.map((f) => f.color),
+          borderRadius: 6,
+        }],
+      },
+      options: {
+        indexAxis: "y",
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+      },
+    });
+
+    // 2. Acquisition by Channel (All channels)
+    const chanLabelsMap = {
+      whatsapp: "WhatsApp",
+      facebook: "Facebook",
+      tiktok: "TikTok",
+      maps_radar: "Radar Maps",
+      form: "Formulaires",
+      booking: "Page RDV",
+      gdrive: "Google Drive",
+      pc: "PC Local",
+      upload: "Upload",
+      manual: "Manuel",
+    };
+    const chEntries = Object.entries(data.by_channel || {}).slice(0, 8);
+    renderChart("source", "chartSource", {
+      type: "bar",
+      data: {
+        labels: chEntries.length ? chEntries.map(([k]) => chanLabelsMap[k] || k) : ["Aucune donnée"],
+        datasets: [{
+          label: "Contacts",
+          data: chEntries.length ? chEntries.map(([, v]) => v) : [0],
+          backgroundColor: ["#22c55e", "#3b82f6", "#ec4899", "#f59e0b", "#8b5cf6", "#06b6d4", "#14b8a6", "#94a3b8"],
+          borderRadius: 6,
+        }],
+      },
+      options: { maintainAspectRatio: false, plugins: { legend: { display: false } } },
+    });
+
+    // 3. Payments by Method (Doughnut)
+    const pmEntries = Object.entries(k.by_payment_method || {});
+    renderChart("payMethods", "chartPayMethods", {
+      type: "doughnut",
+      data: {
+        labels: pmEntries.length ? pmEntries.map(([m]) => m) : ["Aucun paiement"],
+        datasets: [{
+          data: pmEntries.length ? pmEntries.map(([, v]) => v) : [1],
+          backgroundColor: pmEntries.length ? ["#f59e0b", "#2563eb", "#16a34a", "#8b5cf6", "#06b6d4"] : ["#e2e8f0"],
+        }],
+      },
+      options: { maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } },
+    });
+
+    // 4. Email Quality Doughnut
+    renderChart("type", "chartEmailType", {
+      type: "doughnut",
+      data: {
+        labels: ["Professionnel", "Personnel", "Générique"],
+        datasets: [{
+          data: [(s.by_email_type || {}).pro || 0, (s.by_email_type || {}).perso || 0, (s.by_email_type || {}).generic || 0],
+          backgroundColor: ["#6366f1", "#0ea5e9", "#f59e0b"],
+        }],
+      },
+      options: { maintainAspectRatio: false, plugins: { legend: { position: "bottom" } } },
+    });
+  } catch (e) {
+    toast(e.message, "error");
+  }
 }
+
+$("dashRefreshBtn")?.addEventListener("click", loadDashboard);
 
 $("backupDriveBtn").addEventListener("click", async () => {
   $("backupDriveBtn").disabled = true;

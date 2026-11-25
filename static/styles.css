@@ -777,3 +777,70 @@ body {
   .wa-sidebar { max-height: 220px; }
   .wa-chat-messages { min-height: 300px; max-height: 380px; }
 }
+
+
+/* ---------------- EXECUTIVE COMMERCIAL DASHBOARD ---------------- */
+.dash-quickbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.dash-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.dash-kpi {
+  padding: 16px 18px;
+  border-top: 3px solid var(--primary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dash-kpi.accent-green { border-top-color: #16a34a; }
+.dash-kpi.accent-blue { border-top-color: #2563eb; }
+.dash-kpi.accent-amber { border-top-color: #f59e0b; }
+.dash-kpi.accent-purple { border-top-color: #8b5cf6; }
+.dash-kpi.accent-teal { border-top-color: #0d9488; }
+.dash-kpi.accent-slate { border-top-color: #64748b; }
+.dash-kpi-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.dash-kpi-pill {
+  font-size: 11px;
+  background: #f1f5f9;
+  color: #334155;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+.dash-kpi-val {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+.dash-kpi-sub { font-size: 12px; color: var(--muted); }
+.dash-action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.dash-action-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+}

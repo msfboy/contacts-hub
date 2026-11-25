@@ -8,7 +8,7 @@ import secrets
 import shutil
 import string
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 import openpyxl
@@ -159,6 +159,139 @@ def api_stats():
     ws = db.get_workspace(ws_id)
     stats["workspace"] = ws
     return jsonify(stats)
+
+
+@app.route("/api/dashboard/executive", methods=["GET"])
+def api_dashboard_executive():
+    ws_id = _current_workspace_id()
+    ws = db.get_workspace(ws_id)
+    stats = db.get_stats(workspace_id=ws_id)
+    today = datetime.now().strftime("%Y-%m-%d")
+    since_7d = (datetime.now() - timedelta(days=7)).isoformat(timespec="seconds")
+
+    with db.get_conn() as conn:
+        # Revenue & Payments
+        pay_data = payments_hub.list_payments(workspace_id=ws_id)
+        pay_sum = pay_data.get("summary") or {}
+        recent_payments = (pay_data.get("items") or [])[:5]
+
+        # Pipeline value & hot leads & clients
+        row_crm = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'client' THEN 1 ELSE 0 END) AS clients,
+                SUM(CASE WHEN lead_score >= 70 AND status != 'client' THEN 1 ELSE 0 END) AS hot_leads,
+                SUM(CASE WHEN status NOT IN ('client', 'unsubscribed') THEN COALESCE(deal_value, 0) ELSE 0 END) AS pipeline_value
+            FROM contacts
+            WHERE COALESCE(workspace_id, 1) = ?
+            """,
+            (ws_id,),
+        ).fetchone()
+
+        total_c = int(row_crm["total"] or 0)
+        clients_c = int(row_crm["clients"] or 0)
+        hot_c = int(row_crm["hot_leads"] or 0)
+        pipeline_val = float(row_crm["pipeline_value"] or 0)
+        conv_rate = round((clients_c / total_c * 100), 1) if total_c > 0 else 0.0
+
+        # Activity last 7 days
+        wa_7d = conn.execute("SELECT COUNT(*) FROM whatsapp_messages WHERE sent_at >= ?", (since_7d,)).fetchone()[0]
+        calls_7d = conn.execute("SELECT COUNT(*) FROM contact_activities WHERE kind = 'call' AND created_at >= ?", (since_7d,)).fetchone()[0]
+        emails_7d = conn.execute("SELECT COUNT(*) FROM email_logs WHERE sent_at >= ?", (since_7d,)).fetchone()[0]
+
+        # Upcoming appointments
+        upcoming_appts = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT * FROM appointments
+                WHERE status = 'confirmed' AND appointment_date >= ?
+                ORDER BY appointment_date ASC, appointment_time ASC
+                LIMIT 6
+                """,
+                (today,),
+            ).fetchall()
+        ]
+        total_appts = conn.execute("SELECT COUNT(*) FROM appointments WHERE status != 'cancelled'").fetchone()[0]
+
+        # Pending CRM tasks
+        pending_tasks = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT t.*, c.full_name, c.email, c.phone
+                FROM contact_tasks t
+                LEFT JOIN contacts c ON c.id = t.contact_id
+                WHERE t.done = 0
+                ORDER BY t.due_date ASC
+                LIMIT 6
+                """
+            ).fetchall()
+        ]
+
+        # Top 5 hot leads to close now
+        top_hot = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT id, full_name, email, phone, company, lead_score, status, deal_value, source_type
+                FROM contacts
+                WHERE COALESCE(workspace_id, 1) = ? AND status NOT IN ('client', 'unsubscribed')
+                ORDER BY lead_score DESC, deal_value DESC, updated_at DESC
+                LIMIT 6
+                """,
+                (ws_id,),
+            ).fetchall()
+        ]
+
+        # Acquisition by all channels
+        src_rows = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(source_type, ''), 'manual') AS src, COUNT(*) AS cnt
+            FROM contacts
+            WHERE COALESCE(workspace_id, 1) = ?
+            GROUP BY src
+            ORDER BY cnt DESC
+            """,
+            (ws_id,),
+        ).fetchall()
+        by_channel = {r["src"]: r["cnt"] for r in src_rows}
+
+    by_st = stats.get("by_status") or {}
+    funnel = [
+        {"label": "Nouveaux prospects", "count": by_st.get("new", 0), "color": "#64748b"},
+        {"label": "Contactés", "count": by_st.get("contacted", 0), "color": "#3b82f6"},
+        {"label": "Réponses & À relancer", "count": by_st.get("replied", 0) + by_st.get("followup", 0), "color": "#f59e0b"},
+        {"label": "RDV / Tests réservés", "count": total_appts, "color": "#8b5cf6"},
+        {"label": "Clients / Inscrits", "count": clients_c, "color": "#16a34a"},
+    ]
+
+    return jsonify({
+        "workspace": ws,
+        "stats": stats,
+        "kpis": {
+            "total_collected": pay_sum.get("total_collected", 0),
+            "total_remaining": pay_sum.get("total_remaining", 0),
+            "payments_count": pay_sum.get("count", 0),
+            "by_payment_method": pay_sum.get("by_method") or {},
+            "pipeline_value": pipeline_val,
+            "conversion_rate": conv_rate,
+            "total_contacts": total_c,
+            "hot_leads": hot_c,
+            "clients_count": clients_c,
+            "upcoming_appts_count": len(upcoming_appts),
+            "wa_messages_7d": wa_7d,
+            "calls_7d": calls_7d,
+            "emails_7d": emails_7d,
+        },
+        "funnel": funnel,
+        "by_channel": by_channel,
+        "top_hot_leads": top_hot,
+        "upcoming_appointments": upcoming_appts,
+        "pending_tasks": pending_tasks,
+        "recent_payments": recent_payments,
+    })
 
 
 @app.route("/api/contacts", methods=["GET"])
