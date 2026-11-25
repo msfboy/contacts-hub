@@ -9,7 +9,14 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "contacts.db")
+if os.environ.get("CONTACTSHUB_DATA_DIR"):
+    DATA_DIR = os.environ["CONTACTSHUB_DATA_DIR"]
+elif os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"):
+    DATA_DIR = "/tmp/contactshub"
+else:
+    DATA_DIR = BASE_DIR
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_PATH = os.path.join(DATA_DIR, "contacts.db")
 
 
 # ---------------- SECRET ENCRYPTION AT REST (STDLIB AUTHENTICATED CTR) ----------------

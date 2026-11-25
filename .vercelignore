@@ -1,0 +1,9 @@
+wa-bridge/
+contacts.db
+contacts.db-*
+backups/
+imports_cache/
+__pycache__/
+*.pyc
+Lancer_ContactsHub.bat
+start_desktop.py

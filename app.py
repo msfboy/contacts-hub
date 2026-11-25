@@ -31,8 +31,8 @@ import wa_broadcast
 import wa_client
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-IMPORTS_DIR = os.path.join(BASE_DIR, "imports_cache")
-BACKUPS_DIR = os.path.join(BASE_DIR, "backups")
+IMPORTS_DIR = os.path.join(db.DATA_DIR, "imports_cache")
+BACKUPS_DIR = os.path.join(db.DATA_DIR, "backups")
 os.makedirs(IMPORTS_DIR, exist_ok=True)
 os.makedirs(BACKUPS_DIR, exist_ok=True)
 
