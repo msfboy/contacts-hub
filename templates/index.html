@@ -54,6 +54,10 @@
           <span class="nav-icon">💰</span>
           <span>Paiements & Reçus</span>
         </button>
+        <button class="nav-item" data-tab="booking">
+          <span class="nav-icon">📅</span>
+          <span>RDV & Test Niveau</span>
+        </button>
         <button class="nav-item" data-tab="dashboard">
           <span class="nav-icon">📊</span>
           <span>Tableau de bord</span>
@@ -367,6 +371,7 @@
           <button class="subtab active" data-subtab="conv-wa">💬 WhatsApp Interne</button>
           <button class="subtab" data-subtab="conv-broadcast">📣 Broadcast & Auto-WA</button>
           <button class="subtab" data-subtab="conv-social">📘 Facebook & TikTok</button>
+          <button class="subtab" data-subtab="conv-radar">🗺️ Radar Local (Maps/OSM)</button>
           <button class="subtab" data-subtab="conv-links">🔥 Signaux chauds & Liens trackés</button>
           <button class="subtab" data-subtab="conv-forms">📝 Pages de capture (Lead Magnets)</button>
           <button class="subtab" data-subtab="conv-b2b">🔍 Prospection B2B & Closing</button>
@@ -430,9 +435,10 @@
                 </div>
               </div>
               <div class="wa-chat-composer">
-                <select id="waQuickTplSelect" class="select input-sm" style="max-width:175px;" title="Insérer un modèle">
+                <select id="waQuickTplSelect" class="select input-sm" style="max-width:155px;" title="Insérer un modèle">
                   <option value="">✨ Modèle…</option>
                 </select>
+                <button class="btn btn-secondary btn-sm" id="waAiSuggestBtn" title="Générer une réponse commerciale intelligente">🤖 Suggérer IA</button>
                 <textarea id="waComposerInput" class="input" rows="2" placeholder="Écrivez votre message WhatsApp… (Entrée pour envoyer)"></textarea>
                 <button class="btn btn-primary" id="waSendMsgBtn">Envoyer ➤</button>
               </div>
@@ -744,6 +750,147 @@
                 <button class="btn btn-primary" id="socialSendBtn">Envoyer ➤</button>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- SUBTAB: LOCAL RADAR (OPENSTREETMAP FREE + GOOGLE MAPS) & AI SETTINGS -->
+        <div class="subtab-panel" id="subtab-conv-radar">
+          <div class="card" style="padding:18px;margin-bottom:16px;">
+            <h3 style="margin:0 0 6px;">🗺️ Radar Prospection Locale B2B (OpenStreetMap Gratuit & Google Maps)</h3>
+            <p class="subtitle" style="margin-bottom:14px;">Trouvez des entreprises locales par secteur et ville (hôtels, banques, cliniques, écoles, transitaires…), extrayez leurs emails automatiquement et importez-les dans le CRM.</p>
+            <div class="form-grid">
+              <label class="field">
+                <span>Secteur / Métier *</span>
+                <input type="text" id="radarKeyword" class="input" list="radarKeywordsList" value="hôtel" placeholder="Ex: hôtel, banque, clinique, école…" />
+                <datalist id="radarKeywordsList">
+                  <option value="hôtel" />
+                  <option value="banque" />
+                  <option value="école" />
+                  <option value="clinique" />
+                  <option value="pharmacie" />
+                  <option value="restaurant" />
+                  <option value="logistique" />
+                  <option value="ong" />
+                  <option value="cabinet" />
+                  <option value="entreprise" />
+                  <option value="assurance" />
+                </datalist>
+              </label>
+              <label class="field">
+                <span>Ville / Zone *</span>
+                <input type="text" id="radarCity" class="input" value="Lomé, Togo" placeholder="Ex: Lomé, Togo / Cotonou / Accra" />
+              </label>
+              <label class="field">
+                <span>Moteur de recherche</span>
+                <select id="radarEngine" class="select">
+                  <option value="osm">🌍 OpenStreetMap (100% Gratuit, sans clé)</option>
+                  <option value="google">📍 Google Maps Places (Clé API requise)</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Tag CRM à appliquer à l'import</span>
+                <input type="text" id="radarTag" class="input" value="Radar B2B Lomé" />
+              </label>
+              <label class="field full" style="flex-direction:row;align-items:center;gap:8px;cursor:pointer;">
+                <input type="checkbox" id="radarEnrichEmails" checked />
+                <span>Visiter automatiquement les sites web trouvés pour extraire les emails pro (contact@, rh@, direction@…)</span>
+              </label>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;">
+              <button class="btn btn-primary" id="radarSearchBtn">🔍 Lancer le Radar</button>
+              <button class="btn btn-secondary hidden" id="radarImportBtn">📥 Importer la sélection dans le CRM</button>
+              <span class="subtitle" id="radarStatusText" style="font-size:12.5px;"></span>
+            </div>
+          </div>
+
+          <div class="card" style="padding:18px;margin-bottom:16px;">
+            <div class="table-wrap" style="max-height:380px;overflow-y:auto;">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th class="col-check"><input type="checkbox" id="radarSelectAll" checked /></th>
+                    <th>Entreprise</th>
+                    <th>Téléphone</th>
+                    <th>Email</th>
+                    <th>Site Web</th>
+                    <th>Adresse</th>
+                  </tr>
+                </thead>
+                <tbody id="radarResultsTbody"><tr><td colspan="6" class="empty-cell">Choisissez un secteur et une ville puis cliquez sur « Lancer le Radar ».</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Optional AI & Google Maps Keys Card -->
+          <div class="emailing-grid">
+            <div class="card" style="padding:18px;">
+              <h3 style="margin:0 0 8px;">🤖 Paramètres Assistant IA Commercial</h3>
+              <p class="subtitle" style="margin-bottom:10px;">Fonctionne immédiatement en mode intégré gratuit, ou connectez votre clé <strong>Gemini</strong> (gratuit sur Google AI Studio) / <strong>OpenAI</strong>.</p>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Moteur IA</span>
+                  <select id="aiProviderSelect" class="select">
+                    <option value="builtin">⚡ Intégré Gratuit (Spécial MSF Academy)</option>
+                    <option value="gemini">✨ Google Gemini (Clé API)</option>
+                    <option value="openai">🧠 OpenAI GPT-4o-mini (Clé API)</option>
+                  </select>
+                </label>
+                <label class="field"><span>Clé API IA (optionnelle, chiffrée)</span><input type="password" id="aiApiKeyInput" class="input" placeholder="AIza... ou sk-..." /></label>
+                <label class="field full"><span>Contexte commercial de votre entreprise (offres, prix, horaires)</span><textarea id="aiBizContext" class="input" rows="3"></textarea></label>
+              </div>
+              <div style="margin-top:10px;">
+                <button class="btn btn-primary btn-sm" id="saveAiCfgBtn">💾 Enregistrer l'Assistant IA</button>
+              </div>
+            </div>
+
+            <div class="card" style="padding:18px;">
+              <h3 style="margin:0 0 8px;">📍 Clé Google Maps Places (Optionnelle)</h3>
+              <p class="subtitle" style="margin-bottom:10px;">Le mode <strong>OpenStreetMap</strong> est déjà 100% gratuit. Ajoutez une clé Google Places uniquement si vous souhaitez aussi interroger Google Maps.</p>
+              <label class="field full"><span>Clé API Google Maps Places (chiffrée)</span><input type="password" id="gmapsKeyInput" class="input" placeholder="AIzaSy..." /></label>
+              <div style="margin-top:10px;">
+                <button class="btn btn-secondary btn-sm" id="saveGmapsKeyBtn">💾 Enregistrer clé Google Maps</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: APPOINTMENTS & PLACEMENT TEST BOOKING -->
+      <section class="tab-panel" id="tab-booking">
+        <header class="page-header">
+          <div>
+            <h1>Agenda & Page de Prise de RDV (Test de Niveau)</h1>
+            <p class="subtitle">Partagez votre lien public pour que vos prospects réservent un créneau. Confirmation WhatsApp automatique + création dans le CRM.</p>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <a class="btn btn-secondary" href="/rdv" target="_blank">🌐 Ouvrir la page RDV</a>
+            <button class="btn btn-primary" id="copyBookingUrlBtn">📋 Copier le lien public</button>
+          </div>
+        </header>
+
+        <div class="card" style="padding:18px;margin-bottom:16px;">
+          <h3 style="margin:0 0 10px;">⚙️ Paramètres de votre page de rendez-vous</h3>
+          <div class="form-grid">
+            <label class="field"><span>Lien public à partager (WhatsApp, Bio TikTok, Facebook)</span><input type="text" id="bookingPublicUrl" class="input" readonly /></label>
+            <label class="field"><span>Lieu (pour les RDV en présentiel)</span><input type="text" id="bookingLocationInput" class="input" /></label>
+            <label class="field"><span>Créneaux disponibles (séparés par virgules)</span><input type="text" id="bookingSlotsInput" class="input" placeholder="09:00, 10:30, 14:00, 15:30, 17:00" /></label>
+            <label class="field"><span>Objets de RDV proposés (1 par ligne)</span><textarea id="bookingTopicsInput" class="input" rows="3"></textarea></label>
+          </div>
+          <div style="margin-top:10px;">
+            <button class="btn btn-primary btn-sm" id="saveBookingSettingsBtn">💾 Enregistrer la page RDV</button>
+          </div>
+        </div>
+
+        <div class="card" style="padding:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <h3 style="margin:0;">Rendez-vous & Tests de Niveau réservés</h3>
+            <button class="btn btn-secondary btn-sm" id="refreshApptsBtn">↻ Actualiser</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Réf</th><th>Prospect</th><th>Objet & Mode</th><th>Date & Heure</th><th>Statut</th><th class="col-actions">Actions</th></tr></thead>
+              <tbody id="appointmentsTbody"><tr><td colspan="6" class="empty-cell">Aucun rendez-vous réservé pour le moment.</td></tr></tbody>
+            </table>
           </div>
         </div>
       </section>

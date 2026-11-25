@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prendre Rendez-vous — {{ workspace.name }}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #f0f7ff 0%, #f8fafc 100%);
+      color: #0f172a;
+      margin: 0;
+      padding: 28px 16px;
+      min-height: 100vh;
+    }
+    .card {
+      max-width: 600px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 14px 36px rgba(15, 23, 42, 0.08);
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+    }
+    .hero {
+      background: {{ workspace.primary_color or '#2563eb' }};
+      color: #fff;
+      padding: 26px 28px;
+    }
+    .hero h1 { margin: 0 0 6px; font-size: 22px; }
+    .hero p { margin: 0; opacity: 0.92; font-size: 13.5px; }
+    .body { padding: 26px 28px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .full { grid-column: 1 / -1; }
+    label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; color: #334155; }
+    input, select, textarea {
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+    }
+    input:focus, select:focus, textarea:focus { outline: 2px solid {{ workspace.primary_color or '#2563eb' }}; border-color: transparent; }
+    .slots { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+    .slot-btn {
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .slot-btn.active { background: {{ workspace.primary_color or '#2563eb' }}; color: #fff; border-color: transparent; }
+    .slot-btn:disabled { opacity: 0.4; text-decoration: line-through; cursor: not-allowed; }
+    .btn-submit {
+      width: 100%;
+      margin-top: 18px;
+      padding: 13px;
+      border: 0;
+      border-radius: 10px;
+      background: {{ workspace.primary_color or '#2563eb' }};
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .alert { padding: 12px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 13.5px; }
+    .alert-err { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+    .success-box { text-align: center; padding: 24px 12px; }
+    .success-box h2 { color: #15803d; margin: 10px 0 8px; }
+    .loc-pill { display: inline-block; background: rgba(255,255,255,0.16); padding: 4px 10px; border-radius: 999px; font-size: 12px; margin-top: 10px; }
+    @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="hero">
+      <h1>📅 {{ workspace.name }}</h1>
+      <p>Réservez votre Test de Niveau gratuit ou votre Entretien d'inscription</p>
+      <span class="loc-pill">📍 {{ location }}</span>
+    </div>
+    <div class="body">
+      {% if confirmed %}
+      <div class="success-box">
+        <div style="font-size:44px;">✅</div>
+        <h2>Rendez-vous confirmé !</h2>
+        <p style="font-size:14.5px;color:#334155;">
+          Merci <strong>{{ full_name }}</strong> ! Votre référence est <strong>{{ booking_ref }}</strong>.<br/>
+          Rendez-vous le <strong>{{ appt_date }} à {{ appt_time }}</strong> ({{ mode }}).
+        </p>
+        <p style="font-size:13px;color:#64748b;margin-top:12px;">
+          Une confirmation WhatsApp vient d'être envoyée sur votre numéro. À très bientôt !
+        </p>
+      </div>
+      {% else %}
+        {% if error %}<div class="alert alert-err">{{ error }}</div>{% endif %}
+        <form method="POST" id="bookingForm">
+          <div class="grid">
+            <label class="full">
+              <span>Objet du rendez-vous *</span>
+              <select name="topic" required>
+                {% for t in topics %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Mode de rendez-vous *</span>
+              <select name="mode" required>
+                <option value="Présentiel">📍 En présentiel au centre</option>
+                <option value="En ligne (WhatsApp / Meet)">💻 En ligne (WhatsApp / Meet)</option>
+              </select>
+            </label>
+            <label>
+              <span>Date souhaitée *</span>
+              <input type="date" name="appointment_date" id="apptDate" value="{{ default_date }}" min="{{ today }}" required />
+            </label>
+            <div class="full">
+              <label><span>Créneau horaire disponible *</span></label>
+              <input type="hidden" name="appointment_time" id="apptTime" required />
+              <div class="slots" id="slotsWrap"></div>
+            </div>
+            <label>
+              <span>Votre nom complet *</span>
+              <input type="text" name="full_name" required placeholder="Ex: Ama Mensah" />
+            </label>
+            <label>
+              <span>Téléphone WhatsApp *</span>
+              <input type="tel" name="phone" required placeholder="+228 90 00 00 00" />
+            </label>
+            <label class="full">
+              <span>Email (optionnel)</span>
+              <input type="email" name="email" placeholder="votre@email.com" />
+            </label>
+            <label class="full">
+              <span>Objectif / Niveau actuel (optionnel)</span>
+              <textarea name="notes" rows="2" placeholder="Ex: Débutant, je souhaite parler anglais pour mon travail…"></textarea>
+            </label>
+          </div>
+          <button type="submit" class="btn-submit">✅ Confirmer mon rendez-vous gratuit</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <script>
+    const ALL_SLOTS = {{ slots | tojson }};
+    const dateInput = document.getElementById("apptDate");
+    const timeInput = document.getElementById("apptTime");
+    const slotsWrap = document.getElementById("slotsWrap");
+
+    async function loadSlots() {
+      if (!dateInput || !slotsWrap) return;
+      const d = dateInput.value;
+      let booked = [];
+      try {
+        const res = await fetch(`/api/booking/slots?date=${encodeURIComponent(d)}`);
+        const data = await res.json();
+        booked = data.booked || [];
+      } catch {}
+      timeInput.value = "";
+      slotsWrap.innerHTML = "";
+      ALL_SLOTS.forEach((s) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "slot-btn";
+        btn.textContent = s;
+        if (booked.includes(s)) {
+          btn.disabled = true;
+          btn.title = "Créneau déjà réservé";
+        } else {
+          btn.onclick = () => {
+            slotsWrap.querySelectorAll(".slot-btn").forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            timeInput.value = s;
+          };
+          if (!timeInput.value) {
+            btn.classList.add("active");
+            timeInput.value = s;
+          }
+        }
+        slotsWrap.appendChild(btn);
+      });
+    }
+    if (dateInput) {
+      dateInput.addEventListener("change", loadSlots);
+      loadSlots();
+    }
+  </script>
+</body>
+</html>

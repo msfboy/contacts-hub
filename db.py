@@ -537,6 +537,29 @@ def init_db() -> None:
             )
             """
         )
+
+        # Appointments & Placement Tests (RDV)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS appointments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                booking_ref TEXT UNIQUE NOT NULL,
+                contact_id INTEGER,
+                full_name TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                email TEXT DEFAULT '',
+                topic TEXT DEFAULT 'Test de niveau gratuit',
+                mode TEXT DEFAULT 'Présentiel',
+                appointment_date TEXT NOT NULL,
+                appointment_time TEXT NOT NULL,
+                status TEXT DEFAULT 'confirmed',
+                notes TEXT DEFAULT '',
+                workspace_id INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_appt_date ON appointments(appointment_date, appointment_time)")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS lead_forms (

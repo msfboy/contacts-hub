@@ -14,11 +14,14 @@ from typing import Any, Dict, List
 import openpyxl
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_file, session, url_for
 
+import ai_assistant
+import booking_hub
 import campaigns
 import connectors
 import db
 import enrichment
 import gdrive_client
+import local_radar
 import parsers
 import payments_hub
 import prospecting
@@ -2148,6 +2151,189 @@ def view_payment_receipt(pid: int):
 def api_payment_send_wa(pid: int):
     url = f"{request.host_url.rstrip('/')}/receipt/{pid}"
     res = payments_hub.send_receipt_via_whatsapp(pid, url)
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    return jsonify(res)
+
+
+# ---------------- LOCAL RADAR (OPENSTREETMAP FREE + GOOGLE MAPS) ----------------
+
+@app.route("/api/radar/config", methods=["GET", "POST"])
+def api_radar_config():
+    if request.method == "POST":
+        data = request.get_json(force=True) or {}
+        local_radar.save_gmaps_key(data.get("google_maps_api_key") or "")
+        return jsonify({"ok": True, "has_gmaps_key": bool(local_radar.get_gmaps_key())})
+    return jsonify({"has_gmaps_key": bool(local_radar.get_gmaps_key())})
+
+
+@app.route("/api/radar/search", methods=["POST"])
+def api_radar_search():
+    data = request.get_json(force=True) or {}
+    keyword = (data.get("keyword") or "hotel").strip()
+    city = (data.get("city") or "Lomé, Togo").strip()
+    engine = (data.get("engine") or "osm").strip()
+    enrich = bool(data.get("enrich_emails", False))
+    res = local_radar.search_local_businesses(keyword=keyword, city=city, engine=engine, enrich_emails=enrich)
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    return jsonify(res)
+
+
+@app.route("/api/radar/import", methods=["POST"])
+def api_radar_import():
+    data = request.get_json(force=True) or {}
+    items = data.get("items") or []
+    tag = (data.get("tag") or "Radar B2B").strip()
+    ws_id = int(data.get("workspace_id") or 1)
+    res = local_radar.import_radar_businesses(items, tag=tag, workspace_id=ws_id)
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    return jsonify(res)
+
+
+# ---------------- AI SALES ASSISTANT (WHATSAPP & CRM) ----------------
+
+@app.route("/api/ai/config", methods=["GET", "POST"])
+def api_ai_config():
+    if request.method == "POST":
+        data = request.get_json(force=True) or {}
+        cfg = ai_assistant.save_ai_config(
+            data.get("provider") or "builtin",
+            data.get("api_key") or "",
+            data.get("business_context") or "",
+        )
+        return jsonify({"ok": True, "config": cfg})
+    return jsonify(ai_assistant.get_ai_config(include_secret=False))
+
+
+@app.route("/api/ai/suggest-wa", methods=["POST"])
+def api_ai_suggest_wa():
+    data = request.get_json(force=True) or {}
+    phone = (data.get("phone") or "").strip()
+    jid = (data.get("jid") or "").strip()
+    cid = data.get("contact_id")
+    name = (data.get("contact_name") or "").strip()
+    goal = (data.get("goal") or "repondre").strip()
+    msgs = wa_client.list_messages(phone=phone, jid=jid, contact_id=int(cid) if cid else None)
+    booking_url = f"{request.host_url.rstrip('/')}/rdv"
+    res = ai_assistant.suggest_reply(contact_name=name, messages=msgs, goal=goal, booking_url=booking_url)
+    return jsonify(res)
+
+
+@app.route("/api/ai/summarize-wa", methods=["POST"])
+def api_ai_summarize_wa():
+    data = request.get_json(force=True) or {}
+    cid = data.get("contact_id")
+    phone = (data.get("phone") or "").strip()
+    jid = (data.get("jid") or "").strip()
+    name = (data.get("contact_name") or "").strip()
+    if not cid:
+        return jsonify({"error": "Contact non lié au CRM."}), 400
+    msgs = wa_client.list_messages(phone=phone, jid=jid, contact_id=int(cid))
+    res = ai_assistant.summarize_chat_to_crm(int(cid), name, msgs)
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    return jsonify(res)
+
+
+# ---------------- PUBLIC APPOINTMENT BOOKING (/rdv) & AGENDA ----------------
+
+@app.route("/rdv", methods=["GET", "POST"])
+def public_booking_page():
+    cfg = booking_hub.get_booking_settings()
+    today = datetime.now().strftime("%Y-%m-%d")
+    if request.method == "POST":
+        res = booking_hub.create_appointment({
+            "full_name": request.form.get("full_name"),
+            "phone": request.form.get("phone"),
+            "email": request.form.get("email"),
+            "topic": request.form.get("topic"),
+            "mode": request.form.get("mode"),
+            "appointment_date": request.form.get("appointment_date"),
+            "appointment_time": request.form.get("appointment_time"),
+            "notes": request.form.get("notes"),
+        })
+        if not res.get("ok"):
+            return render_template(
+                "booking.html",
+                workspace=cfg["workspace"],
+                location=cfg["location"],
+                slots=cfg["slots"],
+                topics=cfg["topics"],
+                today=today,
+                default_date=request.form.get("appointment_date") or today,
+                confirmed=False,
+                error=res.get("error"),
+            )
+        return render_template(
+            "booking.html",
+            workspace=cfg["workspace"],
+            location=cfg["location"],
+            slots=cfg["slots"],
+            topics=cfg["topics"],
+            today=today,
+            default_date=today,
+            confirmed=True,
+            booking_ref=res["booking_ref"],
+            full_name=request.form.get("full_name"),
+            appt_date=request.form.get("appointment_date"),
+            appt_time=request.form.get("appointment_time"),
+            mode=request.form.get("mode"),
+        )
+    return render_template(
+        "booking.html",
+        workspace=cfg["workspace"],
+        location=cfg["location"],
+        slots=cfg["slots"],
+        topics=cfg["topics"],
+        today=today,
+        default_date=today,
+        confirmed=False,
+        error=None,
+    )
+
+
+@app.route("/api/booking/slots", methods=["GET"])
+def api_booking_slots():
+    d = (request.args.get("date") or datetime.now().strftime("%Y-%m-%d")).strip()
+    return jsonify({"date": d, "booked": booking_hub.get_booked_slots(d)})
+
+
+@app.route("/api/booking/settings", methods=["GET", "POST"])
+def api_booking_settings():
+    if request.method == "POST":
+        data = request.get_json(force=True) or {}
+        cfg = booking_hub.save_booking_settings(
+            data.get("slots") or "",
+            data.get("location") or "",
+            data.get("topics") or "",
+        )
+        cfg["public_url"] = f"{request.host_url.rstrip('/')}/rdv"
+        return jsonify(cfg)
+    cfg = booking_hub.get_booking_settings()
+    cfg["public_url"] = f"{request.host_url.rstrip('/')}/rdv"
+    return jsonify(cfg)
+
+
+@app.route("/api/appointments", methods=["GET"])
+def api_appointments_list():
+    st = (request.args.get("status") or "").strip()
+    return jsonify({"items": booking_hub.list_appointments(status=st)})
+
+
+@app.route("/api/appointments/<int:aid>/status", methods=["POST"])
+def api_appointment_status(aid: int):
+    data = request.get_json(force=True) or {}
+    res = booking_hub.update_appointment_status(aid, data.get("status") or "confirmed")
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    return jsonify(res)
+
+
+@app.route("/api/appointments/<int:aid>/remind-wa", methods=["POST"])
+def api_appointment_remind_wa(aid: int):
+    res = booking_hub.send_appointment_reminder_wa(aid)
     if not res.get("ok"):
         return jsonify({"error": res.get("error")}), 400
     return jsonify(res)

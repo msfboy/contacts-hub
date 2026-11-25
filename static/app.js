@@ -66,6 +66,7 @@ function switchTab(tab) {
   else { stopWaPolling(); }
   if (tab === "training-forms") loadTrainingForms();
   if (tab === "payments") loadPayments();
+  if (tab === "booking") loadBookingHub();
   if (tab === "dashboard") loadDashboard();
   if (tab === "quality") loadDuplicates();
   if (tab === "gdrive" && !state.driveLoaded) loadDriveFiles();
@@ -97,6 +98,7 @@ document.querySelectorAll(".subtab").forEach((btn) => {
     if (btn.dataset.subtab === "conv-wa") { loadWaTemplates(); loadHotSignals(); initWaInbox(); }
     if (btn.dataset.subtab === "conv-broadcast") { loadBroadcastHub(); }
     if (btn.dataset.subtab === "conv-social") { loadSocialHub(); }
+    if (btn.dataset.subtab === "conv-radar") { loadRadarAndAiSettings(); }
     if (btn.dataset.subtab === "conv-links") { loadTrackedLinks(); loadHotSignals(); }
     if (btn.dataset.subtab === "conv-forms") loadLeadForms();
     if (btn.dataset.subtab === "conv-b2b") loadClosingSettings();
@@ -2326,8 +2328,29 @@ function openInternalWaChat(chat, prefillText = "") {
   const actions = $("waChatHeaderActions");
   actions.innerHTML = `
     ${waActiveChat.phone ? `<button class="btn btn-secondary btn-sm" id="waHeadCallBtn">📞 Appeler</button>` : ""}
+    ${waActiveChat.contact_id ? `<button class="btn btn-secondary btn-sm" id="waHeadSumBtn" title="Résumer cette discussion dans la Fiche 360°">📋 Résumer</button>` : ""}
     ${waActiveChat.contact_id ? `<button class="btn btn-secondary btn-sm" id="waHeadProfBtn">👁 Fiche 360°</button>` : ""}
   `;
+  const sumBtn = $("waHeadSumBtn");
+  if (sumBtn) {
+    sumBtn.addEventListener("click", async () => {
+      try {
+        await api("/api/ai/summarize-wa", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contact_id: waActiveChat.contact_id,
+            phone: waActiveChat.phone,
+            jid: waActiveChat.jid,
+            contact_name: waActiveChat.display_name,
+          }),
+        });
+        toast("Résumé IA enregistré dans la Fiche 360° !", "success");
+      } catch (e) {
+        toast(e.message, "error");
+      }
+    });
+  }
   const callBtn = $("waHeadCallBtn");
   if (callBtn) {
     callBtn.addEventListener("click", () => {
@@ -3848,3 +3871,263 @@ $("savePaymentBtn")?.addEventListener("click", async () => {
 });
 $("refreshPaymentsBtn")?.addEventListener("click", loadPayments);
 $("paySearchInput")?.addEventListener("input", loadPayments);
+
+
+// ---------------- AI SALES ASSISTANT IN WHATSAPP ----------------
+
+$("waAiSuggestBtn")?.addEventListener("click", async () => {
+  if (!waActiveChat) return toast("Sélectionnez d'abord une discussion WhatsApp.", "error");
+  const btn = $("waAiSuggestBtn");
+  const oldTxt = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "⏳ IA…";
+  try {
+    const res = await api("/api/ai/suggest-wa", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contact_id: waActiveChat.contact_id,
+        phone: waActiveChat.phone,
+        jid: waActiveChat.jid,
+        contact_name: waActiveChat.display_name,
+        goal: "repondre",
+      }),
+    });
+    $("waComposerInput").value = res.reply || "";
+    $("waComposerInput").focus();
+    toast(`Suggestion IA générée (${res.engine}) !`, "success");
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldTxt;
+  }
+});
+
+// ---------------- LOCAL RADAR (OSM FREE + GOOGLE MAPS) & AI CONFIG ----------------
+
+let radarResultsCache = [];
+
+async function loadRadarAndAiSettings() {
+  try {
+    const aiCfg = await api("/api/ai/config");
+    if ($("aiProviderSelect")) $("aiProviderSelect").value = aiCfg.provider || "builtin";
+    if ($("aiApiKeyInput")) $("aiApiKeyInput").value = aiCfg.api_key || "";
+    if ($("aiBizContext")) $("aiBizContext").value = aiCfg.business_context || "";
+  } catch {}
+}
+
+$("saveAiCfgBtn")?.addEventListener("click", async () => {
+  try {
+    await api("/api/ai/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: $("aiProviderSelect").value,
+        api_key: $("aiApiKeyInput").value.trim(),
+        business_context: $("aiBizContext").value.trim(),
+      }),
+    });
+    toast("Paramètres de l'Assistant IA enregistrés !", "success");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+$("saveGmapsKeyBtn")?.addEventListener("click", async () => {
+  try {
+    await api("/api/radar/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ google_maps_api_key: $("gmapsKeyInput").value.trim() }),
+    });
+    toast("Clé Google Maps enregistrée !", "success");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+$("radarSearchBtn")?.addEventListener("click", async () => {
+  const btn = $("radarSearchBtn");
+  const st = $("radarStatusText");
+  btn.disabled = true;
+  st.textContent = "⏳ Recherche en cours sur la carte…";
+  try {
+    const res = await api("/api/radar/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        keyword: $("radarKeyword").value.trim() || "hôtel",
+        city: $("radarCity").value.trim() || "Lomé, Togo",
+        engine: $("radarEngine").value,
+        enrich_emails: $("radarEnrichEmails").checked,
+      }),
+    });
+    radarResultsCache = res.items || [];
+    const tbody = $("radarResultsTbody");
+    if (!radarResultsCache.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">Aucune entreprise trouvée pour ce mot-clé. Essayez un autre secteur (ex: hôtel, banque, école, restaurant).</td></tr>';
+      $("radarImportBtn").classList.add("hidden");
+      st.textContent = "0 résultat.";
+      return;
+    }
+    tbody.innerHTML = radarResultsCache
+      .map(
+        (it, idx) => `
+        <tr>
+          <td class="col-check"><input type="checkbox" class="radar-row-check" data-idx="${idx}" checked /></td>
+          <td><strong>${esc(it.name)}</strong><div class="contact-role">${esc(it.category || "")}</div></td>
+          <td>${esc(it.phone || "—")}</td>
+          <td>${esc(it.email || "—")}</td>
+          <td>${it.website ? `<a href="${esc(it.website)}" target="_blank" class="badge badge-manual">🌐 Site</a>` : "—"}</td>
+          <td class="contact-role">${esc(it.address || "")}</td>
+        </tr>
+      `
+      )
+      .join("");
+    $("radarImportBtn").classList.remove("hidden");
+    st.textContent = `✅ ${radarResultsCache.length} entreprise(s) trouvée(s) via ${res.engine === "google_maps" ? "Google Maps" : "OpenStreetMap (Gratuit)"} !`;
+  } catch (e) {
+    st.textContent = "";
+    toast(e.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("radarSelectAll")?.addEventListener("change", (e) => {
+  document.querySelectorAll(".radar-row-check").forEach((cb) => (cb.checked = e.target.checked));
+});
+
+$("radarImportBtn")?.addEventListener("click", async () => {
+  const selected = [];
+  document.querySelectorAll(".radar-row-check:checked").forEach((cb) => {
+    const it = radarResultsCache[Number(cb.dataset.idx)];
+    if (it) selected.push(it);
+  });
+  if (!selected.length) return toast("Cochez au moins une entreprise à importer.", "error");
+  try {
+    const res = await api("/api/radar/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: selected,
+        tag: $("radarTag").value.trim() || "Radar B2B",
+        workspace_id: state.workspaceId || 1,
+      }),
+    });
+    toast(`Radar importé : ${res.inserted} ajouté(s), ${res.updated} mis à jour dans le CRM !`, "success");
+    refreshAll();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+// ---------------- APPOINTMENTS & BOOKING HUB (/rdv) ----------------
+
+async function loadBookingHub() {
+  try {
+    const cfg = await api("/api/booking/settings");
+    if ($("bookingPublicUrl")) $("bookingPublicUrl").value = cfg.public_url || `${window.location.origin}/rdv`;
+    if ($("bookingLocationInput")) $("bookingLocationInput").value = cfg.location || "";
+    if ($("bookingSlotsInput")) $("bookingSlotsInput").value = (cfg.slots || []).join(", ");
+    if ($("bookingTopicsInput")) $("bookingTopicsInput").value = (cfg.topics || []).join("\n");
+  } catch {}
+  loadAppointmentsList();
+}
+
+async function loadAppointmentsList() {
+  try {
+    const data = await api("/api/appointments");
+    const items = data.items || [];
+    const tbody = $("appointmentsTbody");
+    if (!tbody) return;
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">Aucun rendez-vous réservé pour le moment. Partagez votre lien public !</td></tr>';
+      return;
+    }
+    const stBadge = {
+      confirmed: '<span class="badge badge-pro">✅ Confirmé</span>',
+      completed: '<span class="badge badge-st-client">🎓 Terminé</span>',
+      cancelled: '<span class="badge badge-manual">❌ Annulé</span>',
+    };
+    tbody.innerHTML = items
+      .map(
+        (a) => `
+        <tr>
+          <td><code>${esc(a.booking_ref)}</code></td>
+          <td><strong>${esc(a.full_name)}</strong><div class="contact-role">${esc(a.phone)}${a.email ? " · " + esc(a.email) : ""}</div></td>
+          <td>${esc(a.topic)}<div class="contact-role">${esc(a.mode)}</div></td>
+          <td><strong>${esc(a.appointment_date)}</strong> à ${esc(a.appointment_time)}</td>
+          <td>${stBadge[a.status] || esc(a.status)}</td>
+          <td class="col-actions">
+            <button class="icon-btn appt-wa-btn" data-id="${a.id}" title="Envoyer rappel WhatsApp">💬</button>
+            <button class="icon-btn appt-done-btn" data-id="${a.id}" title="Marquer terminé">✅</button>
+            <button class="icon-btn danger appt-cancel-btn" data-id="${a.id}" title="Annuler">✕</button>
+          </td>
+        </tr>
+      `
+      )
+      .join("");
+    tbody.querySelectorAll(".appt-wa-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/appointments/${btn.dataset.id}/remind-wa`, { method: "POST" });
+          toast("Rappel de rendez-vous envoyé sur WhatsApp !", "success");
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      });
+    });
+    tbody.querySelectorAll(".appt-done-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await api(`/api/appointments/${btn.dataset.id}/status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "completed" }),
+        });
+        toast("Rendez-vous marqué terminé.", "success");
+        loadAppointmentsList();
+      });
+    });
+    tbody.querySelectorAll(".appt-cancel-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Annuler ce rendez-vous ?")) return;
+        await api(`/api/appointments/${btn.dataset.id}/status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "cancelled" }),
+        });
+        toast("Rendez-vous annulé.", "info");
+        loadAppointmentsList();
+      });
+    });
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+$("copyBookingUrlBtn")?.addEventListener("click", () => {
+  const u = $("bookingPublicUrl")?.value || `${window.location.origin}/rdv`;
+  navigator.clipboard.writeText(u);
+  toast(`Lien RDV copié : ${u}`, "success");
+});
+
+$("saveBookingSettingsBtn")?.addEventListener("click", async () => {
+  try {
+    await api("/api/booking/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        slots: $("bookingSlotsInput").value,
+        location: $("bookingLocationInput").value,
+        topics: $("bookingTopicsInput").value,
+      }),
+    });
+    toast("Paramètres de la page RDV enregistrés !", "success");
+    loadBookingHub();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+$("refreshApptsBtn")?.addEventListener("click", loadAppointmentsList);
