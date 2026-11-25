@@ -13,3 +13,8 @@ __pycache__/
 venv/
 .env
 *.log
+
+# Local WhatsApp QR bridge runtime & session (NEVER commit!)
+wa-bridge/node/
+wa-bridge/node_modules/
+wa-bridge/auth_info/

@@ -62,8 +62,10 @@ function switchTab(tab) {
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${tab}`));
   if (tab === "crm") { loadKanban(); loadTasks(); loadSegments(); }
-  if (tab === "conversion") { loadWaTemplates(); loadHotSignals(); loadTrackedLinks(); loadLeadForms(); }
+  if (tab === "conversion") { loadWaTemplates(); loadHotSignals(); loadTrackedLinks(); loadLeadForms(); initWaInbox(); }
+  else { stopWaPolling(); }
   if (tab === "training-forms") loadTrainingForms();
+  if (tab === "payments") loadPayments();
   if (tab === "dashboard") loadDashboard();
   if (tab === "quality") loadDuplicates();
   if (tab === "gdrive" && !state.driveLoaded) loadDriveFiles();
@@ -92,7 +94,9 @@ document.querySelectorAll(".subtab").forEach((btn) => {
     if (btn.dataset.subtab === "crm-kanban") loadKanban();
     if (btn.dataset.subtab === "crm-tasks") loadTasks();
     if (btn.dataset.subtab === "crm-segments") loadSegments();
-    if (btn.dataset.subtab === "conv-wa") { loadWaTemplates(); loadHotSignals(); }
+    if (btn.dataset.subtab === "conv-wa") { loadWaTemplates(); loadHotSignals(); initWaInbox(); }
+    if (btn.dataset.subtab === "conv-broadcast") { loadBroadcastHub(); }
+    if (btn.dataset.subtab === "conv-social") { loadSocialHub(); }
     if (btn.dataset.subtab === "conv-links") { loadTrackedLinks(); loadHotSignals(); }
     if (btn.dataset.subtab === "conv-forms") loadLeadForms();
     if (btn.dataset.subtab === "conv-b2b") loadClosingSettings();
@@ -339,6 +343,7 @@ async function loadContacts() {
                 <span class="source-detail" title="${esc(c.source_detail)}">${esc(c.source_detail)}</span>
               </td>
               <td class="col-actions">
+                ${c.phone ? `<button class="icon-btn" data-call="${c.id}" title="Appeler ${esc(c.phone)}">📞</button>` : ""}
                 ${c.phone ? `<button class="icon-btn" data-wa="${c.id}" title="Contacter sur WhatsApp">💬</button>` : ""}
                 <button class="icon-btn" data-prof="${c.id}" title="Fiche 360° & Rappels">👁</button>
                 <button class="icon-btn" data-edit="${c.id}" title="Modifier">✎</button>
@@ -372,6 +377,12 @@ async function loadContacts() {
       a.addEventListener("click", () => {
         navigator.clipboard.writeText(a.dataset.copy);
         toast(`Email copié : ${a.dataset.copy}`, "success");
+      });
+    });
+    tbody.querySelectorAll("[data-call]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const c = state.contacts.find((x) => x.id === Number(btn.dataset.call));
+        if (c) callContact(c);
       });
     });
     tbody.querySelectorAll("[data-wa]").forEach((btn) => {
@@ -1987,8 +1998,22 @@ async function openProfileModal(cid) {
 
     $("profMetaBar").innerHTML =
       `${scoreBadge(c.lead_score)} ${emailTypeBadge(c.email_type)} ${mxBadge(c.mx_status)} ${statusBadge(c.status)}` +
+      (c.phone ? ` <button class="btn btn-primary btn-sm" id="profCallBtn" title="Appeler ${esc(c.phone)}">📞 Appeler</button>` : "") +
+      (c.phone ? ` <button class="btn btn-secondary btn-sm" id="profWaBtn" title="Ouvrir WhatsApp interne">💬 WhatsApp</button>` : "") +
       (c.website ? ` <a href="${esc(c.website)}" target="_blank" class="badge badge-manual">🌐 ${esc(c.website)}</a>` : "") +
       (c.industry ? ` <span class="badge badge-tag">${esc(c.industry)}</span>` : "");
+
+    const profCallBtn = $("profCallBtn");
+    if (profCallBtn) {
+      profCallBtn.addEventListener("click", () => callContact(c, { refreshProfile: true }));
+    }
+    const profWaBtn = $("profWaBtn");
+    if (profWaBtn) {
+      profWaBtn.addEventListener("click", () => {
+        $("profileModal").classList.add("hidden");
+        openWhatsAppForContact(c);
+      });
+    }
 
     const items = [];
     (data.tasks || []).forEach((t) => {
@@ -2100,22 +2125,351 @@ function cleanWaPhone(phone) {
   return d;
 }
 
+function cleanTelPhone(phone) {
+  const raw = String(phone || "").trim();
+  const hasPlus = raw.startsWith("+");
+  const digits = raw.replace(/\D+/g, "");
+  if (!digits) return "";
+  return hasPlus ? `+${digits}` : digits;
+}
+
+async function callContact(contact, opts = {}) {
+  const tel = cleanTelPhone(contact.phone);
+  if (!tel) return toast("Numéro de téléphone invalide.", "error");
+  const link = document.createElement("a");
+  link.href = `tel:${tel}`;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  try {
+    await api("/api/call/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contact_id: contact.id, phone: tel }),
+    });
+    toast(`Appel lancé & enregistré pour ${contact.full_name || contact.email} (${tel})`, "success");
+    refreshAll();
+    if (opts.refreshProfile) openProfileModal(contact.id);
+  } catch {}
+}
+
+// ---------------- INTERNAL WHATSAPP INBOX (QR BRIDGE) ----------------
+let waActiveChat = null;
+let waPollTimer = null;
+let waLastState = "offline";
+let waConversationsCache = [];
+
+function stopWaPolling() {
+  if (waPollTimer) {
+    clearInterval(waPollTimer);
+    waPollTimer = null;
+  }
+}
+
+function initWaInbox() {
+  refreshWaStatus();
+  loadWaConversations();
+  stopWaPolling();
+  waPollTimer = setInterval(() => {
+    refreshWaStatus(true);
+    loadWaConversations(true);
+    if (waActiveChat) loadWaMessages(waActiveChat, true);
+  }, 4000);
+}
+
+async function refreshWaStatus(silent = false) {
+  try {
+    const st = await api("/api/wa/status");
+    waLastState = st.state || "offline";
+    const pill = $("waStatusPill");
+    const meta = $("waStatusMeta");
+    const qrCard = $("waQrCard");
+    const qrImg = $("waQrImg");
+    const connectBtn = $("waConnectBtn");
+    const syncBtn = $("waSyncBtn");
+    const logoutBtn = $("waLogoutBtn");
+    if (!pill) return;
+
+    const dbCounts = st.db_counts || { contacts: 0, messages: 0 };
+    if (st.state === "connected") {
+      pill.className = "wa-status-pill connected";
+      pill.textContent = `🟢 Connecté ${st.me?.phone || ""}`;
+      meta.textContent = `${st.me?.name ? st.me.name + " · " : ""}${dbCounts.contacts} contact(s) WA · ${dbCounts.messages} message(s)`;
+      qrCard.classList.add("hidden");
+      connectBtn.classList.add("hidden");
+      syncBtn.classList.remove("hidden");
+      logoutBtn.classList.remove("hidden");
+    } else if (st.state === "qr" && st.qr) {
+      pill.className = "wa-status-pill qr";
+      pill.textContent = "🟡 Scannez le QR Code";
+      meta.textContent = "En attente de validation depuis votre téléphone…";
+      qrImg.src = st.qr;
+      qrCard.classList.remove("hidden");
+      connectBtn.classList.add("hidden");
+      syncBtn.classList.add("hidden");
+      logoutBtn.classList.add("hidden");
+    } else if (st.state === "connecting") {
+      pill.className = "wa-status-pill qr";
+      pill.textContent = "🟡 Connexion en cours…";
+      meta.textContent = "Génération du QR Code ou reconnexion…";
+      connectBtn.classList.add("hidden");
+      syncBtn.classList.add("hidden");
+      logoutBtn.classList.add("hidden");
+    } else {
+      pill.className = "wa-status-pill offline";
+      pill.textContent = "⚪ Non connecté";
+      meta.textContent = st.lastError || st.error || `${dbCounts.contacts} contact(s) WA · ${dbCounts.messages} message(s) en archive`;
+      qrCard.classList.add("hidden");
+      connectBtn.classList.remove("hidden");
+      syncBtn.classList.add("hidden");
+      logoutBtn.classList.add("hidden");
+    }
+  } catch (e) {
+    if (!silent) toast(e.message, "error");
+  }
+}
+
+async function loadWaConversations(silent = false) {
+  try {
+    const q = ($("waConvSearch")?.value || "").trim();
+    const data = await api(`/api/wa/conversations?q=${encodeURIComponent(q)}`);
+    waConversationsCache = data.items || [];
+    const box = $("waConvList");
+    if (!box) return;
+    if (!waConversationsCache.length) {
+      box.innerHTML = '<div class="empty-cell" style="padding:24px 12px;">Aucune discussion synchronisée.<br/>Connectez WhatsApp ou cliquez sur 💬 sur un contact.</div>';
+      return;
+    }
+    box.innerHTML = waConversationsCache
+      .map((conv) => {
+        const isActive = waActiveChat && (waActiveChat.jid === conv.jid || (waActiveChat.phone && waActiveChat.phone === conv.phone));
+        const timeStr = (conv.last_sent_at || "").slice(11, 16) || (conv.last_sent_at || "").slice(0, 10);
+        const crmBadge = conv.contact_id ? `<span class="badge badge-pro" style="font-size:10px;padding:1px 5px;">CRM</span>` : "";
+        return `
+          <div class="wa-conv-item ${isActive ? "active" : ""}" data-jid="${esc(conv.jid)}">
+            <div class="wa-conv-top">
+              <span class="wa-conv-name">${esc(conv.display_name)} ${crmBadge}</span>
+              <span class="wa-conv-time">${esc(timeStr)}</span>
+            </div>
+            <div class="wa-conv-preview">${conv.last_from_me ? "Vous : " : ""}${esc(conv.last_body || conv.phone)}</div>
+          </div>
+        `;
+      })
+      .join("");
+    box.querySelectorAll(".wa-conv-item").forEach((el) => {
+      el.addEventListener("click", () => {
+        const conv = waConversationsCache.find((x) => x.jid === el.dataset.jid);
+        if (conv) openInternalWaChat(conv);
+      });
+    });
+  } catch (e) {
+    if (!silent) toast(e.message, "error");
+  }
+}
+
+async function loadWaMessages(chat, silent = false) {
+  if (!chat) return;
+  try {
+    const params = new URLSearchParams();
+    if (chat.jid) params.set("jid", chat.jid);
+    if (chat.phone) params.set("phone", chat.phone);
+    if (chat.contact_id) params.set("contact_id", String(chat.contact_id));
+    const data = await api(`/api/wa/messages?${params.toString()}`);
+    const msgs = data.items || [];
+    const box = $("waChatMessages");
+    if (!box) return;
+    const wasAtBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    if (!msgs.length) {
+      box.innerHTML = `
+        <div class="wa-empty-chat">
+          <div style="font-size:26px;margin-bottom:6px;">💬</div>
+          <div><strong>${esc(chat.display_name || chat.phone)}</strong></div>
+          <div class="subtitle" style="margin-top:4px;">Aucun message synchronisé pour ce contact. Écrivez votre premier message ci-dessous !</div>
+        </div>
+      `;
+      return;
+    }
+    box.innerHTML = msgs
+      .map((m) => {
+        const dt = (m.sent_at || "").replace("T", " ").slice(0, 16);
+        return `
+          <div class="wa-bubble ${m.from_me ? "out" : "in"}">
+            <div>${esc(m.body)}</div>
+            <div class="wa-bubble-meta">${esc(dt)} ${m.from_me ? "✓" : ""}</div>
+          </div>
+        `;
+      })
+      .join("");
+    if (!silent || wasAtBottom) {
+      box.scrollTop = box.scrollHeight;
+    }
+  } catch {}
+}
+
+function openInternalWaChat(chat, prefillText = "") {
+  const digits = cleanWaPhone(chat.phone || "");
+  waActiveChat = {
+    jid: chat.jid || (digits ? `${digits}@s.whatsapp.net` : ""),
+    phone: chat.phone || (digits ? `+${digits}` : ""),
+    contact_id: chat.contact_id || chat.id || null,
+    display_name: chat.display_name || chat.full_name || chat.crm_name || chat.phone || "Contact",
+    first_name: chat.first_name || "",
+    last_name: chat.last_name || "",
+    full_name: chat.full_name || chat.display_name || "",
+    company: chat.company || chat.crm_company || "",
+    email: chat.email || chat.crm_email || "",
+  };
+  $("waChatTitle").textContent = waActiveChat.display_name;
+  $("waChatSub").textContent = [waActiveChat.phone, waActiveChat.company, waActiveChat.email].filter(Boolean).join(" · ");
+
+  const actions = $("waChatHeaderActions");
+  actions.innerHTML = `
+    ${waActiveChat.phone ? `<button class="btn btn-secondary btn-sm" id="waHeadCallBtn">📞 Appeler</button>` : ""}
+    ${waActiveChat.contact_id ? `<button class="btn btn-secondary btn-sm" id="waHeadProfBtn">👁 Fiche 360°</button>` : ""}
+  `;
+  const callBtn = $("waHeadCallBtn");
+  if (callBtn) {
+    callBtn.addEventListener("click", () => {
+      if (waActiveChat.contact_id) {
+        callContact({ id: waActiveChat.contact_id, phone: waActiveChat.phone, full_name: waActiveChat.display_name, email: waActiveChat.email });
+      } else {
+        const tel = cleanTelPhone(waActiveChat.phone);
+        if (tel) window.location.href = `tel:${tel}`;
+      }
+    });
+  }
+  const profBtn = $("waHeadProfBtn");
+  if (profBtn) {
+    profBtn.addEventListener("click", () => openProfileModal(waActiveChat.contact_id));
+  }
+
+  if (prefillText) {
+    $("waComposerInput").value = prefillText;
+  }
+  loadWaConversations(true);
+  loadWaMessages(waActiveChat);
+  $("waComposerInput").focus();
+}
+
 async function openWhatsAppForContact(contact, customTpl = null) {
   const digits = cleanWaPhone(contact.phone);
   if (!digits) return toast("Numéro de téléphone invalide pour WhatsApp.", "error");
+  // Switch to Conversion -> WhatsApp Interne without opening any external browser tab
+  switchTab("conversion");
+  const convTab = $("tab-conversion");
+  convTab.querySelectorAll(".subtab").forEach((b) => b.classList.toggle("active", b.dataset.subtab === "conv-wa"));
+  convTab.querySelectorAll(".subtab-panel").forEach((p) => p.classList.toggle("active", p.id === "subtab-conv-wa"));
+  await loadWaTemplates();
   const tpl = customTpl ?? ($("waTplBody")?.value || "Bonjour {prenom} 👋");
   const msg = renderWaMessage(tpl, contact);
-  window.open(`https://wa.me/${digits}?text=${encodeURIComponent(msg)}`, "_blank", "noopener");
+  openInternalWaChat(
+    {
+      contact_id: contact.id,
+      phone: contact.phone,
+      display_name: contact.full_name || contact.email || contact.phone,
+      first_name: contact.first_name,
+      last_name: contact.last_name,
+      full_name: contact.full_name,
+      company: contact.company,
+      email: contact.email,
+    },
+    msg
+  );
+  $("waInbox")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function sendInternalWaMessage() {
+  if (!waActiveChat) return toast("Sélectionnez d'abord une conversation.", "error");
+  const input = $("waComposerInput");
+  const text = input.value.trim();
+  if (!text) return;
+  const btn = $("waSendMsgBtn");
+  btn.disabled = true;
   try {
-    await api("/api/whatsapp/log", {
+    await api("/api/wa/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contact_id: contact.id, message: msg }),
+      body: JSON.stringify({
+        contact_id: waActiveChat.contact_id,
+        phone: waActiveChat.phone,
+        jid: waActiveChat.jid,
+        text,
+      }),
     });
-    toast(`WhatsApp ouvert & enregistré pour ${contact.full_name || contact.email}`, "success");
-    refreshAll();
-  } catch {}
+    input.value = "";
+    await loadWaMessages(waActiveChat);
+    await loadWaConversations(true);
+    toast("Message WhatsApp envoyé !", "success");
+  } catch (e) {
+    toast(e.message, "error");
+    if (waLastState !== "connected") {
+      refreshWaStatus();
+    }
+  } finally {
+    btn.disabled = false;
+  }
 }
+
+$("waSendMsgBtn")?.addEventListener("click", sendInternalWaMessage);
+$("waComposerInput")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendInternalWaMessage();
+  }
+});
+$("waQuickTplSelect")?.addEventListener("change", (e) => {
+  const t = waTemplatesCache.find((x) => String(x.id) === e.target.value);
+  if (t && waActiveChat) {
+    $("waComposerInput").value = renderWaMessage(t.body, waActiveChat);
+    $("waComposerInput").focus();
+  } else if (t) {
+    $("waComposerInput").value = t.body;
+  }
+  e.target.value = "";
+});
+$("waConvSearch")?.addEventListener("input", () => loadWaConversations(true));
+$("waConnectBtn")?.addEventListener("click", async () => {
+  try {
+    $("waStatusPill").className = "wa-status-pill qr";
+    $("waStatusPill").textContent = "🟡 Démarrage du pont WhatsApp…";
+    await api("/api/wa/connect", { method: "POST" });
+    setTimeout(() => refreshWaStatus(), 1200);
+    setTimeout(() => refreshWaStatus(), 3000);
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+$("waLogoutBtn")?.addEventListener("click", async () => {
+  if (!confirm("Déconnecter votre session WhatsApp de ContactsHub ?")) return;
+  await api("/api/wa/logout", { method: "POST" });
+  toast("Session WhatsApp déconnectée.", "info");
+  refreshWaStatus();
+});
+$("waSyncBtn")?.addEventListener("click", async () => {
+  try {
+    const res = await api("/api/wa/sync", { method: "POST" });
+    toast(`Synchronisé : ${res.contacts || 0} contact(s), ${res.messages || 0} message(s)`, "success");
+    loadWaConversations();
+    refreshWaStatus(true);
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+$("waImportContactsBtn")?.addEventListener("click", async () => {
+  try {
+    const res = await api("/api/wa/import-contacts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspace_id: state.workspaceId || 1 }),
+    });
+    toast(`Import WhatsApp terminé : ${res.inserted} ajouté(s), ${res.linked} relié(s) au CRM !`, "success");
+    refreshAll();
+    loadWaConversations(true);
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
 
 async function loadWaTemplates() {
   try {
@@ -2124,6 +2478,12 @@ async function loadWaTemplates() {
     $("waTemplateSelect").innerHTML = waTemplatesCache
       .map((t) => `<option value="${t.id}">${esc(t.name)}</option>`)
       .join("");
+    const quickSel = $("waQuickTplSelect");
+    if (quickSel) {
+      quickSel.innerHTML =
+        '<option value="">✨ Modèle…</option>' +
+        waTemplatesCache.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+    }
     if (waTemplatesCache.length) {
       $("waTplName").value = waTemplatesCache[0].name;
       $("waTplBody").value = waTemplatesCache[0].body;
@@ -3084,3 +3444,407 @@ function refreshAll() {
 loadWorkspaces();
 checkDriveStatus();
 refreshAll();
+
+
+// ---------------- WHATSAPP BROADCASTS & AUTO-WELCOME ----------------
+
+async function loadBroadcastHub() {
+  try {
+    const cfg = await api("/api/wa/auto-welcome");
+    if ($("waAutoWelcomeEnabled")) $("waAutoWelcomeEnabled").checked = Boolean(cfg.enabled);
+    if ($("waAutoWelcomeTpl")) $("waAutoWelcomeTpl").value = cfg.template || "";
+  } catch {}
+  loadBroadcastList();
+}
+
+async function loadBroadcastList() {
+  try {
+    const data = await api("/api/wa/broadcasts");
+    const items = data.items || [];
+    const tbody = $("bcListTbody");
+    if (!tbody) return;
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-cell">Aucune campagne WhatsApp lancée.</td></tr>';
+      return;
+    }
+    const statusMap = {
+      running: '<span class="badge badge-pro">🔄 En cours</span>',
+      completed: '<span class="badge badge-st-client">✅ Terminée</span>',
+      stopped: '<span class="badge badge-manual">⏹ Arrêtée</span>',
+      pending: '<span class="badge badge-tag">⏳ En attente</span>',
+    };
+    tbody.innerHTML = items
+      .map(
+        (b) => `
+        <tr>
+          <td><strong>${esc(b.name)}</strong></td>
+          <td>${statusMap[b.status] || esc(b.status)}</td>
+          <td style="color:#15803d;font-weight:600;">${b.sent_count} / ${b.total_count}</td>
+          <td style="color:#dc2626;">${b.failed_count}</td>
+          <td>${b.delay_min_sec}–${b.delay_max_sec}s</td>
+          <td>${esc((b.created_at || "").replace("T", " ").slice(0, 16))}</td>
+          <td class="col-actions">
+            ${b.status === "running" ? `<button class="btn btn-danger btn-sm bc-stop-btn" data-id="${b.id}">⏹ Stop</button>` : "—"}
+          </td>
+        </tr>
+      `
+      )
+      .join("");
+    tbody.querySelectorAll(".bc-stop-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await api(`/api/wa/broadcasts/${btn.dataset.id}/stop`, { method: "POST" });
+        toast("Campagne WhatsApp arrêtée.", "info");
+        loadBroadcastList();
+      });
+    });
+  } catch {}
+}
+
+function getBcFilters() {
+  return {
+    workspace_id: state.workspaceId || 1,
+    status: $("bcFilterStatus")?.value || "",
+    tag: ($("bcFilterTag")?.value || "").trim(),
+    min_score: Number($("bcFilterScore")?.value || 0),
+  };
+}
+
+$("saveWaAutoWelcomeBtn")?.addEventListener("click", async () => {
+  try {
+    await api("/api/wa/auto-welcome", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled: $("waAutoWelcomeEnabled").checked,
+        template: $("waAutoWelcomeTpl").value,
+      }),
+    });
+    toast("Auto-répondeur WhatsApp enregistré !", "success");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+$("bcPreviewBtn")?.addEventListener("click", async () => {
+  try {
+    const res = await api("/api/wa/broadcasts/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(getBcFilters()),
+    });
+    $("bcAudienceBadge").textContent = `👥 ${res.count} contact(s) joignable(s) sur WhatsApp`;
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+$("bcStartBtn")?.addEventListener("click", async () => {
+  const msg = ($("bcMessageTpl")?.value || "").trim();
+  if (!msg) return toast("Rédigez d'abord le message de la campagne.", "error");
+  if (!confirm("Lancer cette campagne Broadcast WhatsApp ? Les messages seront envoyés progressivement avec délai de sécurité.")) return;
+  try {
+    const res = await api("/api/wa/broadcasts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: ($("bcName")?.value || "").trim(),
+        message_tpl: msg,
+        filters: getBcFilters(),
+        delay_min_sec: Number($("bcDelayMin")?.value || 18),
+        delay_max_sec: Number($("bcDelayMax")?.value || 40),
+      }),
+    });
+    toast(`Broadcast lancé vers ${res.total_count} contact(s) !`, "success");
+    loadBroadcastList();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+$("refreshBcBtn")?.addEventListener("click", loadBroadcastList);
+
+// ---------------- FACEBOOK (MESSENGER + LEAD ADS) & TIKTOK ----------------
+
+let activeSocialSender = null;
+
+async function loadSocialHub() {
+  try {
+    const cfg = await api("/api/social/config");
+    const fb = cfg.facebook || {};
+    const tt = cfg.tiktok || {};
+    if ($("fbPageName")) $("fbPageName").value = fb.page_name || "";
+    if ($("fbPageId")) $("fbPageId").value = fb.page_id || "";
+    if ($("fbAccessToken")) $("fbAccessToken").value = fb.access_token || "";
+    if ($("fbWebhookUrl")) $("fbWebhookUrl").value = fb.webhook_url || "";
+    if ($("fbVerifyToken")) $("fbVerifyToken").value = fb.verify_token || "";
+    if ($("fbLeadTag")) $("fbLeadTag").value = fb.lead_tag || "Facebook Ads";
+    if ($("fbAutoWa")) $("fbAutoWa").checked = Boolean(fb.auto_welcome_wa);
+
+    if ($("ttWebhookUrl")) $("ttWebhookUrl").value = tt.webhook_url || "";
+    if ($("ttBioUrl")) $("ttBioUrl").value = tt.bio_url || "";
+    if ($("ttPageName")) $("ttPageName").value = tt.page_name || "";
+    if ($("ttLeadTag")) $("ttLeadTag").value = tt.lead_tag || "TikTok Leads";
+    if ($("ttAutoWa")) $("ttAutoWa").checked = Boolean(tt.auto_welcome_wa);
+  } catch {}
+  loadSocialConversations();
+}
+
+$("saveFbCfgBtn")?.addEventListener("click", async () => {
+  try {
+    await api("/api/social/config/facebook", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        page_name: $("fbPageName").value.trim(),
+        page_id: $("fbPageId").value.trim(),
+        access_token: $("fbAccessToken").value.trim(),
+        verify_token: $("fbVerifyToken").value.trim(),
+        lead_tag: $("fbLeadTag").value.trim(),
+        auto_welcome_wa: $("fbAutoWa").checked,
+      }),
+    });
+    toast("Configuration Facebook enregistrée !", "success");
+    loadSocialHub();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+$("saveTtCfgBtn")?.addEventListener("click", async () => {
+  try {
+    await api("/api/social/config/tiktok", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        page_name: $("ttPageName").value.trim(),
+        bio_url: $("ttBioUrl").value.trim(),
+        lead_tag: $("ttLeadTag").value.trim(),
+        auto_welcome_wa: $("ttAutoWa").checked,
+      }),
+    });
+    toast("Configuration TikTok enregistrée !", "success");
+    loadSocialHub();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+async function uploadSocialCsv(platform, inputEl, tagEl) {
+  const file = inputEl.files?.[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("tag", tagEl?.value?.trim() || (platform === "facebook" ? "Facebook Ads" : "TikTok Leads"));
+  fd.append("workspace_id", String(state.workspaceId || 1));
+  try {
+    const res = await fetch(`/api/social/import-csv/${platform}`, { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Erreur import CSV");
+    toast(`Import ${platform.toUpperCase()} : ${data.imported} lead(s) ajouté(s), ${data.skipped} ignoré(s) !`, "success");
+    refreshAll();
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    inputEl.value = "";
+  }
+}
+
+$("fbCsvFile")?.addEventListener("change", (e) => uploadSocialCsv("facebook", e.target, $("fbLeadTag")));
+$("ttCsvFile")?.addEventListener("change", (e) => uploadSocialCsv("tiktok", e.target, $("ttLeadTag")));
+
+async function loadSocialConversations() {
+  try {
+    const data = await api("/api/social/conversations?platform=facebook");
+    const items = data.items || [];
+    const box = $("socialConvList");
+    if (!box) return;
+    if (!items.length) {
+      box.innerHTML = '<div class="empty-cell" style="padding:24px 12px;">Aucun message Messenger reçu.<br/>Configurez votre Page Access Token & Webhook Meta ci-dessus.</div>';
+      return;
+    }
+    box.innerHTML = items
+      .map(
+        (c) => `
+        <div class="wa-conv-item ${activeSocialSender?.sender_id === c.sender_id ? "active" : ""}" data-sid="${esc(c.sender_id)}" data-name="${esc(c.sender_name || c.sender_id)}" data-cid="${c.contact_id || ""}">
+          <div class="wa-conv-top">
+            <span class="wa-conv-name">📘 ${esc(c.sender_name || c.sender_id)}</span>
+            <span class="wa-conv-time">${esc((c.last_sent_at || "").slice(11, 16))}</span>
+          </div>
+          <div class="wa-conv-preview">${esc(c.last_body || "")}</div>
+        </div>
+      `
+      )
+      .join("");
+    box.querySelectorAll(".wa-conv-item").forEach((el) => {
+      el.addEventListener("click", () => {
+        activeSocialSender = {
+          platform: "facebook",
+          sender_id: el.dataset.sid,
+          sender_name: el.dataset.name,
+          contact_id: el.dataset.cid ? Number(el.dataset.cid) : null,
+        };
+        openSocialChat(activeSocialSender);
+      });
+    });
+  } catch {}
+}
+
+async function openSocialChat(conv) {
+  $("socialChatTitle").textContent = conv.sender_name || conv.sender_id;
+  $("socialChatSub").textContent = `Facebook Messenger · ID ${conv.sender_id}`;
+  $("socialChatActions").innerHTML = conv.contact_id
+    ? `<button class="btn btn-secondary btn-sm" id="socProfBtn">👁 Fiche 360°</button>`
+    : `<button class="btn btn-secondary btn-sm" id="socConvertBtn">➕ Ajouter au CRM</button>`;
+  $("socProfBtn")?.addEventListener("click", () => openProfileModal(conv.contact_id));
+  $("socConvertBtn")?.addEventListener("click", async () => {
+    const phone = prompt("Numéro de téléphone / WhatsApp (optionnel) :", "") || "";
+    const res = await api("/api/social/convert", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform: "facebook", sender_id: conv.sender_id, full_name: conv.sender_name, phone }),
+    });
+    if (res.ok) {
+      toast("Contact Messenger ajouté au CRM !", "success");
+      conv.contact_id = res.contact_id;
+      openSocialChat(conv);
+      refreshAll();
+    }
+  });
+  const data = await api(`/api/social/messages?platform=facebook&sender_id=${encodeURIComponent(conv.sender_id)}`);
+  const msgs = data.items || [];
+  const box = $("socialChatMessages");
+  box.innerHTML = msgs.length
+    ? msgs
+        .map(
+          (m) => `
+          <div class="wa-bubble ${m.from_me ? "out" : "in"}">
+            <div>${esc(m.body)}</div>
+            <div class="wa-bubble-meta">${esc((m.sent_at || "").replace("T", " ").slice(0, 16))}</div>
+          </div>
+        `
+        )
+        .join("")
+    : '<div class="wa-empty-chat">Aucun message.</div>';
+  box.scrollTop = box.scrollHeight;
+}
+
+$("socialSendBtn")?.addEventListener("click", async () => {
+  if (!activeSocialSender) return toast("Sélectionnez une discussion Messenger.", "error");
+  const text = ($("socialComposerInput")?.value || "").trim();
+  if (!text) return;
+  try {
+    await api("/api/social/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sender_id: activeSocialSender.sender_id, text }),
+    });
+    $("socialComposerInput").value = "";
+    openSocialChat(activeSocialSender);
+    toast("Réponse Messenger envoyée !", "success");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+$("refreshSocialInboxBtn")?.addEventListener("click", loadSocialConversations);
+
+// ---------------- STUDENT PAYMENTS & RECEIPTS (TMONEY / FLOOZ) ----------------
+
+function fmtFcfa(val) {
+  return `${Math.round(Number(val || 0)).toLocaleString("fr-FR")} FCFA`;
+}
+
+async function loadPayments() {
+  if ($("payDate") && !$("payDate").value) {
+    $("payDate").value = new Date().toISOString().slice(0, 10);
+  }
+  try {
+    const q = ($("paySearchInput")?.value || "").trim();
+    const wsId = state.workspaceId || 1;
+    const data = await api(`/api/payments?workspace_id=${wsId}&q=${encodeURIComponent(q)}`);
+    const sum = data.summary || {};
+    if ($("payKpiCollected")) $("payKpiCollected").textContent = fmtFcfa(sum.total_collected);
+    if ($("payKpiRemaining")) $("payKpiRemaining").textContent = fmtFcfa(sum.total_remaining);
+    if ($("payKpiCount")) $("payKpiCount").textContent = String(sum.count || 0);
+    if ($("payKpiMethods")) {
+      const bm = sum.by_method || {};
+      const parts = Object.entries(bm).map(([k, v]) => `${esc(k)}: <strong>${fmtFcfa(v)}</strong>`);
+      $("payKpiMethods").innerHTML = parts.length ? parts.join(" · ") : "—";
+    }
+    const items = data.items || [];
+    const tbody = $("paymentsTbody");
+    if (!tbody) return;
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-cell">Aucun paiement enregistré.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items
+      .map(
+        (p) => `
+        <tr>
+          <td><code>${esc(p.receipt_num)}</code></td>
+          <td><strong>${esc(p.student_name)}</strong><div class="contact-role">${esc(p.student_phone || p.student_email || "")}</div></td>
+          <td>${esc(p.course_name)}</td>
+          <td><span class="badge badge-manual">${esc(p.payment_method)}</span> ${p.payment_ref ? `<span class="contact-role">${esc(p.payment_ref)}</span>` : ""}</td>
+          <td style="color:#15803d;font-weight:700;">${fmtFcfa(p.amount_paid)}</td>
+          <td style="color:${p.remaining_balance > 0 ? "#b45309" : "#15803d"};font-weight:600;">${p.effective_fee > 0 ? (p.remaining_balance > 0 ? fmtFcfa(p.remaining_balance) : "Soldé ✅") : "—"}</td>
+          <td>${esc(p.paid_at)}</td>
+          <td class="col-actions">
+            <a class="icon-btn" href="/receipt/${p.id}" target="_blank" title="Voir / Imprimer Reçu PDF">🧾</a>
+            ${p.student_phone ? `<button class="icon-btn pay-wa-btn" data-id="${p.id}" title="Envoyer reçu sur WhatsApp">💬</button>` : ""}
+            <button class="icon-btn danger pay-del-btn" data-id="${p.id}" title="Supprimer">🗑</button>
+          </td>
+        </tr>
+      `
+      )
+      .join("");
+    tbody.querySelectorAll(".pay-wa-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/payments/${btn.dataset.id}/send-whatsapp`, { method: "POST" });
+          toast("Reçu envoyé directement sur WhatsApp !", "success");
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      });
+    });
+    tbody.querySelectorAll(".pay-del-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Supprimer ce paiement ?")) return;
+        await api(`/api/payments/${btn.dataset.id}`, { method: "DELETE" });
+        toast("Paiement supprimé.", "info");
+        loadPayments();
+      });
+    });
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+
+$("savePaymentBtn")?.addEventListener("click", async () => {
+  try {
+    const res = await api("/api/payments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        student_name: $("payStudentName").value.trim(),
+        student_phone: $("payStudentPhone").value.trim(),
+        student_email: $("payStudentEmail").value.trim(),
+        course_name: $("payCourseName").value.trim(),
+        total_fee: Number($("payTotalFee").value || 0),
+        amount_paid: Number($("payAmountPaid").value || 0),
+        payment_method: $("payMethod").value,
+        payment_ref: $("payRef").value.trim(),
+        paid_at: $("payDate").value,
+        notes: $("payNotes").value.trim(),
+        workspace_id: state.workspaceId || 1,
+      }),
+    });
+    toast(`Paiement enregistré ! Reçu ${res.receipt_num} généré.`, "success");
+    ["payStudentName", "payStudentPhone", "payStudentEmail", "payAmountPaid", "payRef", "payNotes"].forEach((id) => ($(id).value = ""));
+    loadPayments();
+    refreshAll();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+$("refreshPaymentsBtn")?.addEventListener("click", loadPayments);
+$("paySearchInput")?.addEventListener("input", loadPayments);

@@ -50,6 +50,10 @@
           <span class="nav-icon">🎓</span>
           <span>Formulaires Formation</span>
         </button>
+        <button class="nav-item" data-tab="payments">
+          <span class="nav-icon">💰</span>
+          <span>Paiements & Reçus</span>
+        </button>
         <button class="nav-item" data-tab="dashboard">
           <span class="nav-icon">📊</span>
           <span>Tableau de bord</span>
@@ -360,15 +364,82 @@
         </header>
 
         <div class="subtabs">
-          <button class="subtab active" data-subtab="conv-wa">💬 WhatsApp 1-clic</button>
+          <button class="subtab active" data-subtab="conv-wa">💬 WhatsApp Interne</button>
+          <button class="subtab" data-subtab="conv-broadcast">📣 Broadcast & Auto-WA</button>
+          <button class="subtab" data-subtab="conv-social">📘 Facebook & TikTok</button>
           <button class="subtab" data-subtab="conv-links">🔥 Signaux chauds & Liens trackés</button>
           <button class="subtab" data-subtab="conv-forms">📝 Pages de capture (Lead Magnets)</button>
           <button class="subtab" data-subtab="conv-b2b">🔍 Prospection B2B & Closing</button>
         </div>
 
-        <!-- SUBTAB 1: WHATSAPP -->
+        <!-- SUBTAB 1: WHATSAPP INTERNE -->
         <div class="subtab-panel active" id="subtab-conv-wa">
-          <div class="emailing-grid">
+          <!-- Connection & Sync Bar -->
+          <div class="card wa-topbar">
+            <div class="wa-topbar-left">
+              <span class="wa-status-pill offline" id="waStatusPill">⚪ Vérification…</span>
+              <span class="subtitle" id="waStatusMeta" style="font-size:12.5px;"></span>
+            </div>
+            <div class="wa-topbar-actions">
+              <button class="btn btn-primary btn-sm" id="waConnectBtn">📱 Connecter WhatsApp (QR)</button>
+              <button class="btn btn-secondary btn-sm hidden" id="waSyncBtn">🔄 Synchroniser</button>
+              <button class="btn btn-secondary btn-sm" id="waImportContactsBtn">📥 Importer contacts WhatsApp dans le CRM</button>
+              <button class="btn btn-danger btn-sm hidden" id="waLogoutBtn">🔌 Déconnecter</button>
+            </div>
+          </div>
+
+          <!-- QR Code Panel -->
+          <div class="card wa-qr-card hidden" id="waQrCard">
+            <div class="wa-qr-wrap">
+              <img id="waQrImg" alt="QR Code WhatsApp" />
+              <div>
+                <h3 style="margin:0 0 8px;">Scannez ce QR Code avec votre téléphone</h3>
+                <ol class="wa-qr-steps">
+                  <li>Ouvrez <strong>WhatsApp</strong> sur votre téléphone</li>
+                  <li>Menu <strong>⋮</strong> (ou Réglages) → <strong>Appareils connectés</strong></li>
+                  <li>Appuyez sur <strong>Connecter un appareil</strong> et scannez ce code</li>
+                </ol>
+                <p class="subtitle" style="margin-top:8px;font-size:12px;">Vos contacts et discussions WhatsApp se synchroniseront automatiquement en interne dans ContactsHub.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Embedded WhatsApp 2-Column Chat -->
+          <div class="card wa-inbox" id="waInbox">
+            <div class="wa-sidebar">
+              <div class="wa-sidebar-head">
+                <input type="search" id="waConvSearch" class="input input-sm" placeholder="🔍 Rechercher discussion ou numéro…" />
+              </div>
+              <div class="wa-conv-list" id="waConvList">
+                <div class="empty-cell" style="padding:24px 12px;">Aucune discussion synchronisée.<br/>Connectez WhatsApp ou cliquez sur 💬 sur un contact.</div>
+              </div>
+            </div>
+            <div class="wa-chat-main">
+              <div class="wa-chat-header" id="waChatHeader">
+                <div>
+                  <strong id="waChatTitle">Sélectionnez une conversation</strong>
+                  <div class="subtitle" id="waChatSub" style="font-size:12px;">Vos messages envoyés et reçus restent enregistrés dans ContactsHub</div>
+                </div>
+                <div class="wa-chat-header-actions" id="waChatHeaderActions"></div>
+              </div>
+              <div class="wa-chat-messages" id="waChatMessages">
+                <div class="wa-empty-chat">
+                  <div style="font-size:32px;margin-bottom:8px;">💬</div>
+                  <div><strong>Messagerie WhatsApp Interne</strong></div>
+                  <div class="subtitle" style="margin-top:4px;">Choisissez une conversation à gauche ou cliquez sur 💬 dans vos Contacts.</div>
+                </div>
+              </div>
+              <div class="wa-chat-composer">
+                <select id="waQuickTplSelect" class="select input-sm" style="max-width:175px;" title="Insérer un modèle">
+                  <option value="">✨ Modèle…</option>
+                </select>
+                <textarea id="waComposerInput" class="input" rows="2" placeholder="Écrivez votre message WhatsApp… (Entrée pour envoyer)"></textarea>
+                <button class="btn btn-primary" id="waSendMsgBtn">Envoyer ➤</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="emailing-grid" style="margin-top:16px;">
             <div class="card" style="padding:18px;">
               <h3 style="margin:0 0 10px;">Modèles de messages WhatsApp</h3>
               <div style="display:flex;gap:8px;margin-bottom:10px;">
@@ -379,7 +450,7 @@
                 <label class="field full"><span>Nom du modèle</span><input type="text" id="waTplName" class="input" placeholder="Ex: Relance session anglais" /></label>
                 <label class="field full">
                   <span>Message (variables : <code>{prenom}</code> <code>{nom}</code> <code>{entreprise}</code>)</span>
-                  <textarea id="waTplBody" class="input" rows="5"></textarea>
+                  <textarea id="waTplBody" class="input" rows="4"></textarea>
                 </label>
               </div>
               <div style="margin-top:10px;">
@@ -389,8 +460,8 @@
 
             <div class="card" style="padding:18px;">
               <h3 style="margin:0 0 6px;">Prospects prêts à contacter sur WhatsApp</h3>
-              <p class="subtitle" style="margin-bottom:12px;">Classés par meilleur Lead Score. Cliquer ouvre WhatsApp avec le message personnalisé et enregistre l'échange dans le CRM.</p>
-              <div class="table-wrap" style="max-height:360px;overflow-y:auto;">
+              <p class="subtitle" style="margin-bottom:12px;">Classés par meilleur Lead Score. Cliquer ouvre la discussion directement dans la messagerie interne ci-dessus.</p>
+              <div class="table-wrap" style="max-height:320px;overflow-y:auto;">
                 <table class="data-table">
                   <thead><tr><th>Prospect</th><th>Téléphone</th><th>Score</th><th class="col-actions">Action</th></tr></thead>
                   <tbody id="waReadyTbody"><tr><td colspan="4" class="empty-cell">Chargement…</td></tr></tbody>
@@ -516,6 +587,221 @@
             </div>
             <input type="text" id="genCopySubj" class="input" style="width:100%;margin-bottom:8px;" placeholder="Objet généré…" />
             <textarea id="genCopyBody" class="input" rows="6" style="width:100%;" placeholder="Cliquez sur « Générer le script »…"></textarea>
+          </div>
+        </div>
+
+        <!-- SUBTAB: WHATSAPP BROADCASTS & AUTO-WELCOME -->
+        <div class="subtab-panel" id="subtab-conv-broadcast">
+          <div class="emailing-grid">
+            <div class="card" style="padding:18px;">
+              <h3 style="margin:0 0 8px;">⚡ Message de bienvenue WhatsApp automatique</h3>
+              <p class="subtitle" style="margin-bottom:12px;">Envoyé automatiquement via votre pont WhatsApp dès qu'un prospect remplit un Formulaire Formation, une Page de Capture ou un Lead Facebook/TikTok.</p>
+              <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-weight:600;font-size:13.5px;cursor:pointer;">
+                <input type="checkbox" id="waAutoWelcomeEnabled" checked />
+                <span>Activer l'envoi automatique de bienvenue</span>
+              </label>
+              <label class="field full">
+                <span>Message automatique (variables : <code>{prenom}</code> <code>{source}</code> <code>{dossier}</code> <code>{formation}</code>)</span>
+                <textarea id="waAutoWelcomeTpl" class="input" rows="4"></textarea>
+              </label>
+              <div style="margin-top:10px;">
+                <button class="btn btn-primary btn-sm" id="saveWaAutoWelcomeBtn">💾 Enregistrer l'auto-répondeur</button>
+              </div>
+            </div>
+
+            <div class="card" style="padding:18px;">
+              <h3 style="margin:0 0 8px;">📣 Nouvelle Campagne Broadcast WhatsApp</h3>
+              <p class="subtitle" style="margin-bottom:12px;">Envoi personnalisé avec délais aléatoires anti-blocage entre chaque message.</p>
+              <div class="form-grid">
+                <label class="field full"><span>Nom de la campagne *</span><input type="text" id="bcName" class="input" placeholder="Ex: Relance Rentrée Anglais Pro" /></label>
+                <label class="field">
+                  <span>Statut cible</span>
+                  <select id="bcFilterStatus" class="select">
+                    <option value="">Tous les statuts</option>
+                    <option value="new">Nouveau</option>
+                    <option value="contacted">Contacté</option>
+                    <option value="replied">A répondu</option>
+                    <option value="followup">À relancer</option>
+                    <option value="client">Client</option>
+                  </select>
+                </label>
+                <label class="field"><span>Tag cible (optionnel)</span><input type="text" id="bcFilterTag" class="input" placeholder="Ex: WhatsApp, Facebook Ads…" /></label>
+                <label class="field"><span>Score minimum</span><input type="number" id="bcFilterScore" class="input" value="0" min="0" max="100" /></label>
+                <label class="field"><span>Délai sécurité (sec min / max)</span>
+                  <div style="display:flex;gap:6px;">
+                    <input type="number" id="bcDelayMin" class="input" value="18" min="8" max="180" />
+                    <input type="number" id="bcDelayMax" class="input" value="40" min="10" max="300" />
+                  </div>
+                </label>
+                <label class="field full">
+                  <span>Message (variables : <code>{prenom}</code> <code>{nom}</code> <code>{entreprise}</code>)</span>
+                  <textarea id="bcMessageTpl" class="input" rows="4" placeholder="Bonjour {prenom} 👋, les inscriptions pour la nouvelle session d'anglais ouvrent cette semaine…"></textarea>
+                </label>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+                <button class="btn btn-secondary btn-sm" id="bcPreviewBtn">👥 Prévisualiser l'audience</button>
+                <button class="btn btn-primary btn-sm" id="bcStartBtn">🚀 Lancer le Broadcast</button>
+                <span class="subtitle" id="bcAudienceBadge" style="font-size:12.5px;"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="padding:18px;margin-top:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <h3 style="margin:0;">Historique & Progression des Broadcasts WhatsApp</h3>
+              <button class="btn btn-secondary btn-sm" id="refreshBcBtn">↻ Actualiser</button>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Campagne</th><th>Statut</th><th>Envoyés</th><th>Échecs</th><th>Délai</th><th>Date</th><th class="col-actions">Action</th></tr></thead>
+                <tbody id="bcListTbody"><tr><td colspan="7" class="empty-cell">Aucune campagne WhatsApp lancée.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- SUBTAB: FACEBOOK (MESSENGER + LEAD ADS) & TIKTOK -->
+        <div class="subtab-panel" id="subtab-conv-social">
+          <div class="emailing-grid">
+            <!-- Facebook Card -->
+            <div class="card" style="padding:18px;">
+              <h3 style="margin:0 0 6px;">📘 Facebook (Page Messenger & Lead Ads)</h3>
+              <p class="subtitle" style="margin-bottom:12px;">Recevez vos leads Facebook Ads et répondez aux messages Messenger directement depuis ContactsHub.</p>
+              <div class="form-grid">
+                <label class="field"><span>Nom de la Page Facebook</span><input type="text" id="fbPageName" class="input" placeholder="MSF'S English Learning Academy" /></label>
+                <label class="field"><span>ID de la Page (Page ID)</span><input type="text" id="fbPageId" class="input" placeholder="123456789012345" /></label>
+                <label class="field full"><span>Page Access Token (chiffré en base)</span><input type="password" id="fbAccessToken" class="input" placeholder="EAAG..." /></label>
+                <label class="field"><span>URL Webhook Meta</span><input type="text" id="fbWebhookUrl" class="input" readonly /></label>
+                <label class="field"><span>Verify Token Meta</span><input type="text" id="fbVerifyToken" class="input" /></label>
+                <label class="field"><span>Tag CRM appliqué</span><input type="text" id="fbLeadTag" class="input" value="Facebook Ads" /></label>
+                <label class="field" style="justify-content:flex-end;">
+                  <span style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                    <input type="checkbox" id="fbAutoWa" checked /> Auto-bienvenue WhatsApp
+                  </span>
+                </label>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+                <button class="btn btn-primary btn-sm" id="saveFbCfgBtn">💾 Enregistrer Facebook</button>
+                <label class="btn btn-secondary btn-sm" style="cursor:pointer;">
+                  📥 Importer CSV Facebook Leads
+                  <input type="file" id="fbCsvFile" accept=".csv,.txt" style="display:none;" />
+                </label>
+              </div>
+            </div>
+
+            <!-- TikTok Card -->
+            <div class="card" style="padding:18px;">
+              <h3 style="margin:0 0 6px;">🎵 TikTok (Lead Generation & Lien Bio)</h3>
+              <p class="subtitle" style="margin-bottom:12px;">Synchronisez vos leads TikTok Ads via Webhook ou CSV, et suivez les conversions depuis votre lien Bio.</p>
+              <div class="form-grid">
+                <label class="field full"><span>URL Webhook TikTok Lead Gen</span><input type="text" id="ttWebhookUrl" class="input" readonly /></label>
+                <label class="field full"><span>URL de votre profil / Bio TikTok</span><input type="url" id="ttBioUrl" class="input" placeholder="https://www.tiktok.com/@votre_compte" /></label>
+                <label class="field"><span>Nom du compte TikTok</span><input type="text" id="ttPageName" class="input" placeholder="@msf_english_academy" /></label>
+                <label class="field"><span>Tag CRM appliqué</span><input type="text" id="ttLeadTag" class="input" value="TikTok Leads" /></label>
+                <label class="field full">
+                  <span style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                    <input type="checkbox" id="ttAutoWa" checked /> Envoyer automatiquement un WhatsApp de bienvenue aux leads TikTok
+                  </span>
+                </label>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+                <button class="btn btn-primary btn-sm" id="saveTtCfgBtn">💾 Enregistrer TikTok</button>
+                <label class="btn btn-secondary btn-sm" style="cursor:pointer;">
+                  📥 Importer CSV TikTok Leads
+                  <input type="file" id="ttCsvFile" accept=".csv,.txt" style="display:none;" />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Internal Facebook Messenger Inbox -->
+          <div class="card wa-inbox" style="margin-top:16px;height:420px;">
+            <div class="wa-sidebar">
+              <div class="wa-sidebar-head" style="display:flex;justify-content:space-between;align-items:center;">
+                <strong style="font-size:13px;">📘 Boîte Messenger Interne</strong>
+                <button class="btn btn-ghost btn-sm" id="refreshSocialInboxBtn">↻</button>
+              </div>
+              <div class="wa-conv-list" id="socialConvList">
+                <div class="empty-cell" style="padding:24px 12px;">Aucun message Messenger reçu.<br/>Configurez votre Page Access Token & Webhook Meta ci-dessus.</div>
+              </div>
+            </div>
+            <div class="wa-chat-main">
+              <div class="wa-chat-header">
+                <div>
+                  <strong id="socialChatTitle">Sélectionnez une discussion Messenger</strong>
+                  <div class="subtitle" id="socialChatSub" style="font-size:12px;">Répondez ici ou convertissez l'interlocuteur en contact CRM</div>
+                </div>
+                <div class="wa-chat-header-actions" id="socialChatActions"></div>
+              </div>
+              <div class="wa-chat-messages" id="socialChatMessages">
+                <div class="wa-empty-chat">
+                  <div style="font-size:28px;margin-bottom:6px;">📘</div>
+                  <div><strong>Facebook Messenger dans ContactsHub</strong></div>
+                </div>
+              </div>
+              <div class="wa-chat-composer">
+                <textarea id="socialComposerInput" class="input" rows="2" placeholder="Répondre sur Facebook Messenger…"></textarea>
+                <button class="btn btn-primary" id="socialSendBtn">Envoyer ➤</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: STUDENT PAYMENTS & RECEIPTS (TMONEY / FLOOZ / CASH) -->
+      <section class="tab-panel" id="tab-payments">
+        <header class="page-header">
+          <div>
+            <h1>Suivi des Paiements & Reçus PDF</h1>
+            <p class="subtitle">Encaissez vos inscriptions (TMoney, Flooz, Espèces, Virement), suivez les restes à payer et envoyez le reçu officiel sur WhatsApp en 1 clic.</p>
+          </div>
+          <button class="btn btn-secondary" id="refreshPaymentsBtn">↻ Actualiser</button>
+        </header>
+
+        <div class="kpi-grid" style="margin-bottom:16px;">
+          <div class="card kpi-card"><div class="kpi-label">Total encaissé</div><div class="kpi-value" id="payKpiCollected">0 FCFA</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Reste à recouvrer</div><div class="kpi-value" id="payKpiRemaining" style="color:#b45309;">0 FCFA</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Reçus émis</div><div class="kpi-value" id="payKpiCount">0</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Répartition Modes</div><div id="payKpiMethods" style="font-size:12.5px;margin-top:4px;color:var(--muted);">—</div></div>
+        </div>
+
+        <div class="card" style="padding:18px;margin-bottom:16px;">
+          <h3 style="margin:0 0 12px;">➕ Enregistrer un paiement / Générer un reçu</h3>
+          <div class="form-grid">
+            <label class="field"><span>Nom complet de l'apprenant *</span><input type="text" id="payStudentName" class="input" placeholder="Ex: Koffi Mensah" /></label>
+            <label class="field"><span>Téléphone WhatsApp</span><input type="text" id="payStudentPhone" class="input" placeholder="+228 90 00 00 00" /></label>
+            <label class="field"><span>Email (optionnel)</span><input type="email" id="payStudentEmail" class="input" placeholder="apprenant@email.com" /></label>
+            <label class="field"><span>Formation / Session *</span><input type="text" id="payCourseName" class="input" value="Formation Intensive Anglais" /></label>
+            <label class="field"><span>Frais total formation (FCFA)</span><input type="number" id="payTotalFee" class="input" value="35000" min="0" step="500" /></label>
+            <label class="field"><span>Montant payé ce jour (FCFA) *</span><input type="number" id="payAmountPaid" class="input" placeholder="20000" min="1" step="500" /></label>
+            <label class="field">
+              <span>Mode de paiement</span>
+              <select id="payMethod" class="select">
+                <option value="TMoney">TMoney (Yas)</option>
+                <option value="Flooz">Flooz (Moov)</option>
+                <option value="Espèces">Espèces</option>
+                <option value="Virement">Virement bancaire</option>
+              </select>
+            </label>
+            <label class="field"><span>Référence transaction</span><input type="text" id="payRef" class="input" placeholder="Ex: TM-84739201" /></label>
+            <label class="field"><span>Date du paiement</span><input type="date" id="payDate" class="input" /></label>
+            <label class="field"><span>Notes (tranche 1, solde…)</span><input type="text" id="payNotes" class="input" placeholder="Ex: 1ère tranche + inscription" /></label>
+          </div>
+          <div style="margin-top:12px;">
+            <button class="btn btn-primary" id="savePaymentBtn">🧾 Enregistrer le paiement & créer le reçu</button>
+          </div>
+        </div>
+
+        <div class="card" style="padding:18px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <h3 style="margin:0;">Historique des Paiements & Reçus</h3>
+            <input type="search" id="paySearchInput" class="input input-sm" style="max-width:280px;" placeholder="🔍 Rechercher reçu, nom, réf…" />
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>N° Reçu</th><th>Apprenant</th><th>Formation</th><th>Mode & Réf</th><th>Payé</th><th>Reste</th><th>Date</th><th class="col-actions">Actions</th></tr></thead>
+              <tbody id="paymentsTbody"><tr><td colspan="8" class="empty-cell">Aucun paiement enregistré.</td></tr></tbody>
+            </table>
           </div>
         </div>
       </section>

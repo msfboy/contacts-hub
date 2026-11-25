@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reçu {{ payment.receipt_num }} — {{ workspace.name }}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #f1f5f9;
+      color: #0f172a;
+      margin: 0;
+      padding: 28px 16px;
+    }
+    .toolbar {
+      max-width: 720px;
+      margin: 0 auto 16px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .btn {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 13.5px;
+    }
+    .btn-primary { background: {{ workspace.primary_color or '#2563eb' }}; color: #fff; }
+    .btn-ghost { background: #fff; color: #334155; border: 1px solid #cbd5e1; }
+    .receipt {
+      max-width: 720px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+    }
+    .header {
+      background: {{ workspace.primary_color or '#2563eb' }};
+      color: #fff;
+      padding: 24px 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    .header h1 { margin: 0; font-size: 20px; }
+    .header p { margin: 4px 0 0; opacity: 0.9; font-size: 13px; }
+    .rec-badge {
+      background: rgba(255,255,255,0.18);
+      padding: 8px 14px;
+      border-radius: 10px;
+      text-align: right;
+    }
+    .rec-badge .num { font-size: 15px; font-weight: 700; letter-spacing: 0.4px; }
+    .rec-badge .lbl { font-size: 11px; text-transform: uppercase; opacity: 0.85; }
+    .body { padding: 28px 30px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 24px; }
+    .box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 14px 16px; }
+    .box-label { font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 6px; }
+    .box-val { font-size: 14.5px; font-weight: 600; }
+    .box-sub { font-size: 12.5px; color: #475569; margin-top: 3px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 22px; }
+    th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid #e2e8f0; font-size: 14px; }
+    th { background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; }
+    .num-col { text-align: right; font-variant-numeric: tabular-nums; }
+    .totals { margin-left: auto; max-width: 320px; }
+    .tot-row { display: flex; justify-content: space-between; padding: 7px 0; font-size: 14px; }
+    .tot-row.grand {
+      border-top: 2px solid #0f172a;
+      margin-top: 6px;
+      padding-top: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      color: #166534;
+    }
+    .tot-row.rem { color: #b45309; font-weight: 600; }
+    .footer {
+      margin-top: 32px;
+      padding-top: 18px;
+      border-top: 1px dashed #cbd5e1;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      font-size: 12.5px;
+      color: #64748b;
+    }
+    .stamp {
+      border: 2px solid #16a34a;
+      color: #16a34a;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-weight: 800;
+      font-size: 13px;
+      letter-spacing: 1px;
+      transform: rotate(-4deg);
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .toolbar { display: none; }
+      .receipt { box-shadow: none; border: 0; max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="btn btn-ghost" onclick="window.close()">Fermer</button>
+    <button class="btn btn-primary" onclick="window.print()">🖨 Imprimer / Enregistrer en PDF</button>
+  </div>
+  <div class="receipt">
+    <div class="header">
+      <div>
+        <h1>{{ workspace.name }}</h1>
+        <p>{{ workspace.tagline or 'Reçu officiel de paiement' }}</p>
+      </div>
+      <div class="rec-badge">
+        <div class="lbl">Reçu officiel</div>
+        <div class="num">{{ payment.receipt_num }}</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="grid">
+        <div class="box">
+          <div class="box-label">Reçu de l'apprenant</div>
+          <div class="box-val">{{ payment.student_name }}</div>
+          {% if payment.student_phone %}<div class="box-sub">📞 {{ payment.student_phone }}</div>{% endif %}
+          {% if payment.student_email %}<div class="box-sub">✉️ {{ payment.student_email }}</div>{% endif %}
+        </div>
+        <div class="box">
+          <div class="box-label">Détails du règlement</div>
+          <div class="box-val">{{ payment.payment_method }}</div>
+          <div class="box-sub">Date : {{ payment.paid_at }}</div>
+          {% if payment.payment_ref %}<div class="box-sub">Référence : {{ payment.payment_ref }}</div>{% endif %}
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Désignation / Formation</th>
+            <th class="num-col">Montant versé</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <strong>{{ payment.course_name }}</strong>
+              {% if payment.notes %}<div style="font-size:12px;color:#64748b;margin-top:3px;">{{ payment.notes }}</div>{% endif %}
+            </td>
+            <td class="num-col"><strong>{{ "{:,.0f}".format(payment.amount_paid).replace(",", " ") }} {{ workspace.currency or 'FCFA' }}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="totals">
+        {% if effective_fee > 0 %}
+        <div class="tot-row">
+          <span>Frais total formation :</span>
+          <span>{{ "{:,.0f}".format(effective_fee).replace(",", " ") }} {{ workspace.currency or 'FCFA' }}</span>
+        </div>
+        <div class="tot-row">
+          <span>Total cumulé versé :</span>
+          <span>{{ "{:,.0f}".format(cumulative_paid).replace(",", " ") }} {{ workspace.currency or 'FCFA' }}</span>
+        </div>
+        {% endif %}
+        <div class="tot-row grand">
+          <span>Montant de ce reçu :</span>
+          <span>{{ "{:,.0f}".format(payment.amount_paid).replace(",", " ") }} {{ workspace.currency or 'FCFA' }}</span>
+        </div>
+        {% if effective_fee > 0 %}
+        <div class="tot-row rem">
+          <span>Reste à payer :</span>
+          <span>{{ "{:,.0f}".format(remaining_balance).replace(",", " ") }} {{ workspace.currency or 'FCFA' }}</span>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="footer">
+        <div>
+          Émis le {{ payment.paid_at }} via {{ workspace.name }}.<br/>
+          Ce reçu fait foi de règlement auprès de l'administration.
+        </div>
+        <div class="stamp">{{ 'SOLDÉ' if remaining_balance <= 0 and effective_fee > 0 else 'PAYÉ' }}</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -20,8 +20,12 @@ import db
 import enrichment
 import gdrive_client
 import parsers
+import payments_hub
 import prospecting
 import services
+import social_hub
+import wa_broadcast
+import wa_client
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMPORTS_DIR = os.path.join(BASE_DIR, "imports_cache")
@@ -1879,6 +1883,303 @@ def api_wa_log():
     return jsonify({"ok": True})
 
 
+# ---------------- INTERNAL WHATSAPP BRIDGE & INBOX ----------------
+
+@app.route("/api/wa-bridge/webhook", methods=["POST"])
+def api_wa_bridge_webhook():
+    payload = request.get_json(force=True) or {}
+    res = wa_client.process_webhook_event(payload)
+    return jsonify(res)
+
+
+@app.route("/api/wa/status", methods=["GET"])
+def api_wa_status():
+    st = wa_client.bridge_get("/status")
+    with db.get_conn() as conn:
+        db_contacts = conn.execute("SELECT COUNT(*) FROM whatsapp_contacts").fetchone()[0]
+        db_messages = conn.execute("SELECT COUNT(*) FROM whatsapp_messages").fetchone()[0]
+    st["db_counts"] = {"contacts": db_contacts, "messages": db_messages}
+    return jsonify(st)
+
+
+@app.route("/api/wa/connect", methods=["POST"])
+def api_wa_connect():
+    res = wa_client.bridge_post("/connect")
+    return jsonify(res)
+
+
+@app.route("/api/wa/logout", methods=["POST"])
+def api_wa_logout():
+    res = wa_client.bridge_post("/logout")
+    return jsonify(res)
+
+
+@app.route("/api/wa/sync", methods=["POST"])
+def api_wa_sync():
+    res = wa_client.bridge_post("/sync")
+    return jsonify(res)
+
+
+@app.route("/api/wa/import-contacts", methods=["POST"])
+def api_wa_import_contacts():
+    data = request.get_json(silent=True) or {}
+    ws_id = int(data.get("workspace_id") or 1)
+    only_with_msgs = bool(data.get("only_with_messages", False))
+    res = wa_client.import_wa_contacts_to_crm(workspace_id=ws_id, only_with_messages=only_with_msgs)
+    return jsonify(res)
+
+
+@app.route("/api/wa/conversations", methods=["GET"])
+def api_wa_conversations():
+    q = (request.args.get("q") or "").strip()
+    items = wa_client.list_conversations(search=q)
+    return jsonify({"items": items})
+
+
+@app.route("/api/wa/messages", methods=["GET"])
+def api_wa_messages():
+    phone = (request.args.get("phone") or "").strip()
+    jid = (request.args.get("jid") or "").strip()
+    cid_raw = request.args.get("contact_id")
+    cid = int(cid_raw) if cid_raw and cid_raw.isdigit() else None
+    items = wa_client.list_messages(phone=phone, jid=jid, contact_id=cid)
+    return jsonify({"items": items})
+
+
+@app.route("/api/wa/send", methods=["POST"])
+def api_wa_send():
+    data = request.get_json(force=True) or {}
+    text = (data.get("text") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    jid = (data.get("jid") or "").strip()
+    cid = data.get("contact_id")
+    if cid is not None and not phone and not jid:
+        with db.get_conn() as conn:
+            row = conn.execute("SELECT phone FROM contacts WHERE id = ?", (int(cid),)).fetchone()
+            if row:
+                phone = row["phone"]
+    if not text or (not phone and not jid):
+        return jsonify({"error": "Numéro de téléphone et message requis."}), 400
+
+    res = wa_client.bridge_post("/send", {"phone": phone, "jid": jid, "text": text})
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error") or "Échec de l'envoi WhatsApp."}), 400
+    return jsonify(res)
+
+
+# ---------------- WHATSAPP BROADCASTS & AUTO-WELCOME ----------------
+
+@app.route("/api/wa/auto-welcome", methods=["GET", "POST"])
+def api_wa_auto_welcome():
+    if request.method == "POST":
+        data = request.get_json(force=True) or {}
+        cfg = wa_broadcast.save_auto_welcome_config(
+            bool(data.get("enabled", True)),
+            data.get("template") or "",
+        )
+        return jsonify(cfg)
+    return jsonify(wa_broadcast.get_auto_welcome_config())
+
+
+@app.route("/api/wa/broadcasts", methods=["GET"])
+def api_wa_broadcasts_list():
+    return jsonify({"items": wa_broadcast.list_broadcasts()})
+
+
+@app.route("/api/wa/broadcasts/preview", methods=["POST"])
+def api_wa_broadcasts_preview():
+    filters = request.get_json(force=True) or {}
+    aud = wa_broadcast.query_audience(filters)
+    return jsonify({"count": len(aud), "sample": aud[:8]})
+
+
+@app.route("/api/wa/broadcasts", methods=["POST"])
+def api_wa_broadcasts_create():
+    data = request.get_json(force=True) or {}
+    name = (data.get("name") or "").strip()
+    tpl = (data.get("message_tpl") or "").strip()
+    if not tpl:
+        return jsonify({"error": "Message de campagne requis."}), 400
+    res = wa_broadcast.create_and_start_broadcast(
+        name=name,
+        message_tpl=tpl,
+        filters=data.get("filters") or {},
+        delay_min=int(data.get("delay_min_sec") or 18),
+        delay_max=int(data.get("delay_max_sec") or 40),
+    )
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    return jsonify(res)
+
+
+@app.route("/api/wa/broadcasts/<int:bid>/stop", methods=["POST"])
+def api_wa_broadcasts_stop(bid: int):
+    return jsonify(wa_broadcast.stop_broadcast(bid))
+
+
+# ---------------- FACEBOOK (MESSENGER + LEAD ADS) & TIKTOK ----------------
+
+@app.route("/api/social/config", methods=["GET"])
+def api_social_config_get():
+    base = request.host_url.rstrip("/")
+    fb = social_hub.get_channel_config("facebook")
+    tt = social_hub.get_channel_config("tiktok")
+    fb["webhook_url"] = f"{base}/webhooks/facebook"
+    tt["webhook_url"] = f"{base}/webhooks/tiktok"
+    return jsonify({"facebook": fb, "tiktok": tt})
+
+
+@app.route("/api/social/config/<platform>", methods=["POST"])
+def api_social_config_save(platform: str):
+    if platform not in ("facebook", "tiktok"):
+        return jsonify({"error": "Plateforme invalide"}), 400
+    data = request.get_json(force=True) or {}
+    cfg = social_hub.save_channel_config(platform, data)
+    return jsonify({"ok": True, "config": cfg})
+
+
+@app.route("/webhooks/facebook", methods=["GET", "POST"])
+def webhook_facebook():
+    if request.method == "GET":
+        mode = request.args.get("hub.mode")
+        token = request.args.get("hub.verify_token")
+        challenge = request.args.get("hub.challenge", "")
+        cfg = social_hub.get_channel_config("facebook")
+        if mode == "subscribe" and token and token == cfg.get("verify_token"):
+            return Response(challenge, status=200, mimetype="text/plain")
+        return Response("Forbidden", status=403)
+    payload = request.get_json(silent=True) or {}
+    return jsonify(social_hub.process_facebook_webhook(payload))
+
+
+@app.route("/webhooks/tiktok", methods=["GET", "POST"])
+def webhook_tiktok():
+    if request.method == "GET":
+        challenge = request.args.get("challenge") or request.args.get("hub.challenge") or "ok"
+        return Response(challenge, status=200, mimetype="text/plain")
+    payload = request.get_json(silent=True) or {}
+    return jsonify(social_hub.process_tiktok_webhook(payload))
+
+
+@app.route("/api/social/conversations", methods=["GET"])
+def api_social_conversations():
+    platform = (request.args.get("platform") or "").strip()
+    return jsonify({"items": social_hub.list_social_conversations(platform)})
+
+
+@app.route("/api/social/messages", methods=["GET"])
+def api_social_messages():
+    platform = (request.args.get("platform") or "facebook").strip()
+    sender_id = (request.args.get("sender_id") or "").strip()
+    return jsonify({"items": social_hub.list_social_messages(platform, sender_id)})
+
+
+@app.route("/api/social/send", methods=["POST"])
+def api_social_send():
+    data = request.get_json(force=True) or {}
+    sender_id = (data.get("sender_id") or "").strip()
+    text = (data.get("text") or "").strip()
+    if not sender_id or not text:
+        return jsonify({"error": "Destinataire et message requis."}), 400
+    res = social_hub.send_facebook_messenger_reply(sender_id, text)
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    return jsonify(res)
+
+
+@app.route("/api/social/convert", methods=["POST"])
+def api_social_convert():
+    data = request.get_json(force=True) or {}
+    res = social_hub.convert_social_sender_to_crm(
+        platform=data.get("platform") or "facebook",
+        sender_id=data.get("sender_id") or "",
+        phone=data.get("phone") or "",
+        email=data.get("email") or "",
+        full_name=data.get("full_name") or "",
+    )
+    return jsonify(res)
+
+
+@app.route("/api/social/import-csv/<platform>", methods=["POST"])
+def api_social_import_csv(platform: str):
+    if platform not in ("facebook", "tiktok"):
+        return jsonify({"error": "Plateforme invalide"}), 400
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "Fichier CSV requis."}), 400
+    tag = (request.form.get("tag") or "").strip()
+    ws_id = int(request.form.get("workspace_id") or 1)
+    res = social_hub.import_social_leads_csv(platform, f.read(), tag=tag, workspace_id=ws_id)
+    return jsonify(res)
+
+
+# ---------------- STUDENT PAYMENTS & RECEIPTS (TMONEY / FLOOZ / CASH) ----------------
+
+@app.route("/api/payments", methods=["GET"])
+def api_payments_list():
+    q = (request.args.get("q") or "").strip()
+    ws_id = int(request.args.get("workspace_id") or 1)
+    return jsonify(payments_hub.list_payments(search=q, workspace_id=ws_id))
+
+
+@app.route("/api/payments", methods=["POST"])
+def api_payments_create():
+    data = request.get_json(force=True) or {}
+    res = payments_hub.create_payment(data)
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    return jsonify(res)
+
+
+@app.route("/api/payments/<int:pid>", methods=["DELETE"])
+def api_payments_delete(pid: int):
+    return jsonify(payments_hub.delete_payment(pid))
+
+
+@app.route("/receipt/<int:pid>", methods=["GET"])
+def view_payment_receipt(pid: int):
+    data = payments_hub.get_receipt_data(pid)
+    if not data:
+        return "Reçu introuvable", 404
+    return render_template("receipt.html", **data)
+
+
+@app.route("/api/payments/<int:pid>/send-whatsapp", methods=["POST"])
+def api_payment_send_wa(pid: int):
+    url = f"{request.host_url.rstrip('/')}/receipt/{pid}"
+    res = payments_hub.send_receipt_via_whatsapp(pid, url)
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    return jsonify(res)
+
+
+@app.route("/api/call/log", methods=["POST"])
+def api_call_log():
+    data = request.get_json(force=True) or {}
+    cid = int(data.get("contact_id"))
+    phone = (data.get("phone") or "").strip()[:60]
+    note = (data.get("note") or "").strip()[:220]
+    content = f"Appel téléphonique vers {phone}" if phone else "Appel téléphonique lancé"
+    if note:
+        content = f"{content} — {note}"
+    now = datetime.now().isoformat(timespec="seconds")
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO contact_activities (contact_id, kind, content, created_at) VALUES (?, 'call', ?, ?)",
+            (cid, content, now),
+        )
+        conn.execute(
+            """
+            UPDATE contacts SET
+                status = CASE WHEN status = 'new' THEN 'contacted' ELSE status END,
+                last_contacted_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, cid),
+        )
+    return jsonify({"ok": True})
+
+
 @app.route("/api/links", methods=["GET"])
 def api_list_links():
     with db.get_conn() as conn:
@@ -2227,6 +2528,15 @@ def public_capture_form(slug: str):
                     ),
                 )
 
+            if phone:
+                wa_broadcast.trigger_auto_welcome_wa(
+                    contact_id=cid,
+                    phone=phone,
+                    full_name=full_name,
+                    source_label=form["title"],
+                    extra_vars={"dossier": dossier_used, "formation": form["title"]},
+                )
+
             wa_num = "".join(ch for ch in (cfg.get("whatsapp_number") or "") if ch.isdigit())
             wa_url = ""
             if wa_num:
@@ -2281,6 +2591,13 @@ def public_capture_form(slug: str):
                 VALUES (?, ?, '', ?, ?, ?, ?, ?)
                 """,
                 (form["id"], cid, full_name, email_addr, phone, json.dumps(dict(request.form), ensure_ascii=False), now),
+            )
+        if phone:
+            wa_broadcast.trigger_auto_welcome_wa(
+                contact_id=cid,
+                phone=phone,
+                full_name=full_name,
+                source_label=form["title"],
             )
         if form.get("redirect_url"):
             return redirect(form["redirect_url"])

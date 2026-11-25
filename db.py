@@ -418,6 +418,127 @@ def init_db() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS whatsapp_contacts (
+                jid TEXT PRIMARY KEY,
+                phone TEXT NOT NULL,
+                name TEXT DEFAULT '',
+                notify TEXT DEFAULT '',
+                contact_id INTEGER,
+                last_synced_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS whatsapp_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                wa_msg_id TEXT UNIQUE NOT NULL,
+                jid TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                contact_id INTEGER,
+                from_me INTEGER DEFAULT 0,
+                body TEXT NOT NULL,
+                push_name TEXT DEFAULT '',
+                sent_at TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_wa_msg_phone ON whatsapp_messages(phone, sent_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_wa_msg_cid ON whatsapp_messages(contact_id, sent_at)")
+
+        # Social channels (Facebook Messenger/Lead Ads & TikTok Lead Gen/Bio)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS social_channels (
+                platform TEXT PRIMARY KEY,
+                page_id TEXT DEFAULT '',
+                page_name TEXT DEFAULT '',
+                access_token TEXT DEFAULT '',
+                verify_token TEXT DEFAULT '',
+                lead_tag TEXT DEFAULT '',
+                bio_url TEXT DEFAULT '',
+                auto_welcome_wa INTEGER DEFAULT 1,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS social_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                external_id TEXT UNIQUE,
+                sender_id TEXT NOT NULL,
+                sender_name TEXT DEFAULT '',
+                contact_id INTEGER,
+                from_me INTEGER DEFAULT 0,
+                body TEXT NOT NULL,
+                sent_at TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_social_msg_sender ON social_messages(platform, sender_id, sent_at)")
+
+        # Targeted WhatsApp Broadcasts
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS wa_broadcasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                message_tpl TEXT NOT NULL,
+                filter_json TEXT DEFAULT '{}',
+                delay_min_sec INTEGER DEFAULT 18,
+                delay_max_sec INTEGER DEFAULT 40,
+                status TEXT DEFAULT 'pending',
+                total_count INTEGER DEFAULT 0,
+                sent_count INTEGER DEFAULT 0,
+                failed_count INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                completed_at TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS wa_broadcast_recipients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                broadcast_id INTEGER NOT NULL,
+                contact_id INTEGER,
+                phone TEXT NOT NULL,
+                full_name TEXT DEFAULT '',
+                status TEXT DEFAULT 'pending',
+                error TEXT DEFAULT '',
+                sent_at TEXT DEFAULT ''
+            )
+            """
+        )
+
+        # Student Payments & Receipts (TMoney / Flooz / Cash / Bank)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS student_payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                receipt_num TEXT UNIQUE NOT NULL,
+                contact_id INTEGER,
+                student_name TEXT NOT NULL,
+                student_phone TEXT DEFAULT '',
+                student_email TEXT DEFAULT '',
+                course_name TEXT NOT NULL,
+                total_fee REAL DEFAULT 0,
+                amount_paid REAL NOT NULL,
+                payment_method TEXT DEFAULT 'TMoney',
+                payment_ref TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                workspace_id INTEGER DEFAULT 1,
+                paid_at TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS lead_forms (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 slug TEXT UNIQUE NOT NULL,
