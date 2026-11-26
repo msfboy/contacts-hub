@@ -138,6 +138,14 @@ def find_contact_id_by_phone(conn, phone: str) -> Optional[int]:
     return None
 
 
+def _is_real_wa_phone(jid: str, phone: str) -> bool:
+    if not jid or jid.endswith("@lid") or jid.endswith("@g.us") or jid.endswith("@newsletter"):
+        return False
+    d = normalize_digits(phone)
+    # Real international phone numbers are 7–13 digits; WhatsApp privacy LIDs are 14–15 digits
+    return 7 <= len(d) <= 13
+
+
 def process_webhook_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     event = payload.get("event") or ""
     now = datetime.now().isoformat(timespec="seconds")
@@ -148,7 +156,7 @@ def process_webhook_event(payload: Dict[str, Any]) -> Dict[str, Any]:
         for c in payload.get("contacts") or []:
             jid = (c.get("jid") or "").strip()
             phone = format_plus_phone(c.get("phone") or "")
-            if not jid or not phone:
+            if not _is_real_wa_phone(jid, phone):
                 continue
             cid = find_contact_id_by_phone(conn, phone)
             name = (c.get("name") or "").strip()
@@ -174,7 +182,7 @@ def process_webhook_event(payload: Dict[str, Any]) -> Dict[str, Any]:
             jid = (m.get("jid") or "").strip()
             phone = format_plus_phone(m.get("phone") or "")
             body = (m.get("body") or "").strip()
-            if not wa_id or not jid or not phone or not body:
+            if not wa_id or not body or not _is_real_wa_phone(jid, phone):
                 continue
             ts = int(m.get("timestamp") or time.time())
             sent_at = datetime.fromtimestamp(ts).isoformat(timespec="seconds")
@@ -329,7 +337,7 @@ def import_wa_contacts_to_crm(workspace_id: int = 1, only_with_messages: bool = 
         for wc in wa_rows:
             phone = wc["phone"]
             digits = normalize_digits(phone)
-            if len(digits) < 6:
+            if not _is_real_wa_phone(wc["jid"], phone):
                 continue
             existing_id = find_contact_id_by_phone(conn, phone)
             if existing_id:
