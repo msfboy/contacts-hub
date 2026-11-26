@@ -370,6 +370,7 @@
 
         <div class="subtabs">
           <button class="subtab active" data-subtab="conv-wa">💬 WhatsApp Interne</button>
+          <button class="subtab" data-subtab="conv-wa-groups">👥 Groupes WhatsApp</button>
           <button class="subtab" data-subtab="conv-broadcast">📣 Broadcast & Auto-WA</button>
           <button class="subtab" data-subtab="conv-social">📘 Facebook & TikTok</button>
           <button class="subtab" data-subtab="conv-radar">🗺️ Radar Local (Maps/OSM)</button>
@@ -594,6 +595,54 @@
             </div>
             <input type="text" id="genCopySubj" class="input" style="width:100%;margin-bottom:8px;" placeholder="Objet généré…" />
             <textarea id="genCopyBody" class="input" rows="6" style="width:100%;" placeholder="Cliquez sur « Générer le script »…"></textarea>
+          </div>
+        </div>
+
+        <!-- SUBTAB 1B: GROUPES WHATSAPP -->
+        <div class="subtab-panel" id="subtab-conv-wa-groups">
+          <div class="card" style="padding:18px;margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+              <div>
+                <h3 style="margin:0;">👥 Mes Groupes WhatsApp</h3>
+                <p class="subtitle" style="margin:4px 0 0;">Visualisez vos groupes, inspectez les vrais numéros exploitables et importez tous les membres en 1 clic dans le CRM avec un tag dédié.</p>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <input type="search" id="waGroupsSearch" class="input input-sm" placeholder="🔍 Filtrer un groupe…" style="width:220px;" />
+                <button class="btn btn-primary btn-sm" id="waGroupsRefreshBtn">🔄 Charger mes groupes</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Nom du groupe</th>
+                    <th>Membres</th>
+                    <th>Vrais numéros extraits</th>
+                    <th>Tag d'import</th>
+                    <th class="col-actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="waGroupsTbody">
+                  <tr><td colspan="5" class="empty-cell">Cliquez sur « Charger mes groupes » (WhatsApp doit être connecté).</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card hidden" id="waGroupMembersCard" style="padding:18px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+              <div>
+                <h3 style="margin:0;" id="waGroupMembersTitle">Membres du groupe</h3>
+                <p class="subtitle" id="waGroupMembersSub" style="margin:4px 0 0;"></p>
+              </div>
+              <button class="btn btn-primary btn-sm" id="waGroupImportSelectedBtn">📥 Importer tous ces membres dans le CRM</button>
+            </div>
+            <div class="table-wrap" style="max-height:360px;overflow:auto;">
+              <table class="data-table">
+                <thead><tr><th>Nom WhatsApp</th><th>Téléphone</th><th>Rôle</th></tr></thead>
+                <tbody id="waGroupMembersTbody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
 

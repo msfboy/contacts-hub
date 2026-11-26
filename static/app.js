@@ -2720,6 +2720,114 @@ $("waSyncBtn")?.addEventListener("click", async () => {
     toast(e.message, "error");
   }
 });
+
+// ---------------- WHATSAPP GROUPS INSPECTOR & 1-CLICK CRM IMPORT ----------------
+let waGroupsCache = [];
+let waActiveGroupIdx = null;
+
+function renderWaGroupsTable() {
+  const tbody = $("waGroupsTbody");
+  if (!tbody) return;
+  const q = ($("waGroupsSearch")?.value || "").trim().toLowerCase();
+  const filtered = waGroupsCache
+    .map((g, idx) => ({ g, idx }))
+    .filter(({ g }) => !q || (g.subject || "").toLowerCase().includes(q));
+
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">Aucun groupe trouvé.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered
+    .map(
+      ({ g, idx }) => `
+      <tr>
+        <td><strong>${esc(g.subject)}</strong>${g.description ? `<div class="contact-role">${esc(g.description.slice(0, 90))}</div>` : ""}</td>
+        <td>${Number(g.size || 0)}</td>
+        <td><span class="badge ${g.phoneCount > 0 ? "badge-st-client" : "badge-manual"}">${Number(g.phoneCount || 0)} numéro(s)</span></td>
+        <td><input type="text" class="input input-sm wa-group-tag" data-idx="${idx}" value="${esc(`Groupe: ${g.subject.slice(0, 45)}`)}" style="min-width:170px;" /></td>
+        <td class="col-actions">
+          <button class="btn btn-secondary btn-sm wa-grp-view-btn" data-idx="${idx}">👁 Voir</button>
+          <button class="btn btn-primary btn-sm wa-grp-imp-btn" data-idx="${idx}" ${g.phoneCount ? "" : "disabled"}>📥 Importer (${g.phoneCount})</button>
+        </td>
+      </tr>
+    `
+    )
+    .join("");
+
+  tbody.querySelectorAll(".wa-grp-view-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.idx);
+      const g = waGroupsCache[idx];
+      if (!g) return;
+      waActiveGroupIdx = idx;
+      $("waGroupMembersCard")?.classList.remove("hidden");
+      if ($("waGroupMembersTitle")) $("waGroupMembersTitle").textContent = `👥 ${g.subject}`;
+      if ($("waGroupMembersSub")) $("waGroupMembersSub").textContent = `${g.phoneCount} vrai(s) numéro(s) exploitable(s) sur ${g.size} membre(s).`;
+      const mtbody = $("waGroupMembersTbody");
+      if (mtbody) {
+        mtbody.innerHTML = (g.participants || []).length
+          ? g.participants
+              .map(
+                (p) => `
+                <tr>
+                  <td>${esc(p.name || "—")}</td>
+                  <td><strong>${esc(p.phone)}</strong></td>
+                  <td>${p.isAdmin ? '<span class="badge badge-st-followup">Admin</span>' : '<span class="badge badge-manual">Membre</span>'}</td>
+                </tr>`
+              )
+              .join("")
+          : '<tr><td colspan="3" class="empty-cell">Aucun numéro non masqué disponible dans ce groupe.</td></tr>';
+      }
+      $("waGroupMembersCard")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  });
+
+  tbody.querySelectorAll(".wa-grp-imp-btn").forEach((btn) => {
+    btn.addEventListener("click", () => importWaGroupByIdx(Number(btn.dataset.idx), btn));
+  });
+}
+
+async function importWaGroupByIdx(idx, btnEl = null) {
+  const g = waGroupsCache[idx];
+  if (!g || !g.participants?.length) return toast("Aucun numéro exploitable à importer.", "error");
+  const tagInput = document.querySelector(`.wa-group-tag[data-idx="${idx}"]`);
+  const tag = (tagInput?.value || `Groupe: ${g.subject}`).trim();
+  if (btnEl) btnEl.disabled = true;
+  try {
+    const res = await api("/api/wa/groups/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subject: g.subject, participants: g.participants, tag }),
+    });
+    toast(`Groupe « ${g.subject} » : ${res.inserted} ajouté(s), ${res.linked} mis à jour avec le tag « ${res.tag} » !`, "success");
+    refreshAll();
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    if (btnEl) btnEl.disabled = false;
+  }
+}
+
+async function loadWaGroups() {
+  const tbody = $("waGroupsTbody");
+  if (tbody) tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">Chargement de vos groupes WhatsApp…</td></tr>';
+  try {
+    const data = await api("/api/wa/groups");
+    waGroupsCache = data.items || [];
+    renderWaGroupsTable();
+  } catch (e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="empty-cell">${esc(e.message)}</td></tr>`;
+  }
+}
+
+$("waGroupsRefreshBtn")?.addEventListener("click", loadWaGroups);
+$("waGroupsSearch")?.addEventListener("input", renderWaGroupsTable);
+$("waGroupImportSelectedBtn")?.addEventListener("click", () => {
+  if (waActiveGroupIdx !== null) importWaGroupByIdx(waActiveGroupIdx, $("waGroupImportSelectedBtn"));
+});
+document.querySelector('[data-subtab="conv-wa-groups"]')?.addEventListener("click", () => {
+  if (!waGroupsCache.length) loadWaGroups();
+});
 $("waImportContactsBtn")?.addEventListener("click", async () => {
   try {
     const res = await api("/api/wa/import-contacts", {

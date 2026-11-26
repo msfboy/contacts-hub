@@ -376,3 +376,91 @@ def import_wa_contacts_to_crm(workspace_id: int = 1, only_with_messages: bool = 
             inserted += 1
 
     return {"ok": True, "inserted": inserted, "linked": linked}
+
+
+def list_groups() -> Dict[str, Any]:
+    res = bridge_get("/groups", timeout=25.0)
+    if res.get("error") and not res.get("ok"):
+        return {"ok": False, "error": res.get("error"), "items": []}
+    return {"ok": True, "items": res.get("items") or []}
+
+
+def import_group_members_to_crm(
+    group_subject: str,
+    participants: List[Dict[str, Any]],
+    tag: str = "",
+    workspace_id: int = 1,
+) -> Dict[str, Any]:
+    now = datetime.now().isoformat(timespec="seconds")
+    subj = (group_subject or "Groupe WhatsApp").strip()[:100]
+    group_tag = (tag or f"Groupe: {subj}").strip()[:80]
+    inserted = 0
+    linked = 0
+    skipped = 0
+
+    with db.get_conn() as conn:
+        for p in participants or []:
+            jid = (p.get("jid") or "").strip()
+            phone = format_plus_phone(p.get("phone") or "")
+            if not _is_real_wa_phone(jid, phone):
+                skipped += 1
+                continue
+            digits = normalize_digits(phone)
+            name = (p.get("name") or "").strip()
+
+            # Upsert into whatsapp_contacts so it's ready in WA inbox
+            conn.execute(
+                """
+                INSERT INTO whatsapp_contacts (jid, phone, name, notify, last_synced_at)
+                VALUES (?, ?, ?, '', ?)
+                ON CONFLICT(jid) DO UPDATE SET
+                    phone = excluded.phone,
+                    name = CASE WHEN excluded.name != '' AND whatsapp_contacts.name = '' THEN excluded.name ELSE whatsapp_contacts.name END,
+                    last_synced_at = excluded.last_synced_at
+                """,
+                (jid, phone, name, now),
+            )
+
+            existing_id = find_contact_id_by_phone(conn, phone)
+            if existing_id:
+                row = conn.execute("SELECT tags FROM contacts WHERE id = ?", (existing_id,)).fetchone()
+                cur_tags = [t.strip() for t in (row["tags"] or "").split(",") if t.strip()] if row else []
+                if group_tag and group_tag.lower() not in {t.lower() for t in cur_tags}:
+                    cur_tags.append(group_tag)
+                    conn.execute("UPDATE contacts SET tags = ?, updated_at = ? WHERE id = ?", (", ".join(cur_tags), now, existing_id))
+                conn.execute("UPDATE whatsapp_contacts SET contact_id = ? WHERE jid = ?", (existing_id, jid))
+                linked += 1
+                continue
+
+            full_name = name or phone
+            parts = full_name.split(" ", 1)
+            first_name = parts[0] if parts else ""
+            last_name = parts[1] if len(parts) > 1 else ""
+            synth_email = f"wa.{digits}@whatsapp.local"
+
+            row_email = conn.execute("SELECT id, tags FROM contacts WHERE email = ?", (synth_email,)).fetchone()
+            if row_email:
+                cid = int(row_email["id"])
+                cur_tags = [t.strip() for t in (row_email["tags"] or "").split(",") if t.strip()]
+                if group_tag and group_tag.lower() not in {t.lower() for t in cur_tags}:
+                    cur_tags.append(group_tag)
+                    conn.execute("UPDATE contacts SET tags = ?, updated_at = ? WHERE id = ?", (", ".join(cur_tags), now, cid))
+                conn.execute("UPDATE whatsapp_contacts SET contact_id = ? WHERE jid = ?", (cid, jid))
+                linked += 1
+                continue
+
+            cur = conn.execute(
+                """
+                INSERT INTO contacts (
+                    email, first_name, last_name, full_name, phone,
+                    tags, source_type, source_detail, status, email_type, mx_status,
+                    lead_score, workspace_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'whatsapp_group', ?, 'new', 'unknown', 'unchecked', 40, ?, ?, ?)
+                """,
+                (synth_email, first_name, last_name, full_name, phone, group_tag, f"Groupe WA: {subj}", workspace_id, now, now),
+            )
+            cid = cur.lastrowid
+            conn.execute("UPDATE whatsapp_contacts SET contact_id = ? WHERE jid = ?", (cid, jid))
+            inserted += 1
+
+    return {"ok": True, "inserted": inserted, "linked": linked, "skipped": skipped, "tag": group_tag}

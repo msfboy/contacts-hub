@@ -510,6 +510,52 @@ app.post("/send", async (req, res) => {
   }
 });
 
+app.get("/groups", async (req, res) => {
+  if (connectionState !== "connected" || !sock) {
+    return res.status(400).json({ ok: false, error: "WhatsApp n'est pas connecté. Scannez d'abord le QR Code.", items: [] });
+  }
+  try {
+    const groupsObj = await sock.groupFetchAllParticipating();
+    const groups = [];
+    for (const [gjid, g] of Object.entries(groupsObj || {})) {
+      const rawParts = Array.isArray(g?.participants) ? g.participants : [];
+      const participants = [];
+      const seenPhones = new Set();
+      for (const p of rawParts) {
+        const rawId = String(p?.id || "");
+        const altPn = String(p?.phoneNumber || p?.pn || "");
+        if (p?.lid && altPn) registerLidMapping(p.lid, altPn);
+        if (rawId.endsWith("@lid") && altPn) registerLidMapping(rawId, altPn);
+        const resolved = resolveJid(rawId, altPn);
+        const phone = jidToPhone(resolved);
+        if (!phone) continue;
+        const digits = phone.replace(/\D+/g, "");
+        if (digits.length < 7 || digits.length > 13 || seenPhones.has(phone)) continue;
+        seenPhones.add(phone);
+        const cInfo = contactsMap.get(resolved) || {};
+        participants.push({
+          jid: resolved,
+          phone,
+          name: cInfo.name || cInfo.notify || p?.notify || "",
+          isAdmin: Boolean(p?.admin),
+        });
+      }
+      groups.push({
+        jid: gjid,
+        subject: g?.subject || "Groupe sans nom",
+        description: (g?.desc || "").slice(0, 220),
+        size: rawParts.length,
+        phoneCount: participants.length,
+        participants,
+      });
+    }
+    groups.sort((a, b) => b.phoneCount - a.phoneCount || a.subject.localeCompare(b.subject));
+    res.json({ ok: true, items: groups });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err?.message || err), items: [] });
+  }
+});
+
 app.post("/sync", async (req, res) => {
   const allContacts = Array.from(contactsMap.values());
   const allMessages = [];

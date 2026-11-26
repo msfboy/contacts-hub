@@ -2319,6 +2319,32 @@ def api_wa_status():
     return jsonify(st)
 
 
+@app.route("/api/wa/groups", methods=["GET"])
+def api_wa_groups():
+    res = wa_client.list_groups()
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error") or "Impossible de charger les groupes WhatsApp.", "items": []}), 400
+    return jsonify(res)
+
+
+@app.route("/api/wa/groups/import", methods=["POST"])
+def api_wa_groups_import():
+    data = request.get_json(silent=True) or {}
+    subject = (data.get("subject") or "Groupe WhatsApp").strip()
+    participants = data.get("participants") or []
+    tag = (data.get("tag") or "").strip()
+    ws_id = _current_workspace_id()
+    if not participants:
+        return jsonify({"error": "Aucun membre exploitable dans ce groupe."}), 400
+    res = wa_client.import_group_members_to_crm(
+        group_subject=subject,
+        participants=participants,
+        tag=tag,
+        workspace_id=ws_id,
+    )
+    return jsonify(res)
+
+
 @app.route("/api/wa/connect", methods=["POST"])
 def api_wa_connect():
     res = wa_client.bridge_post("/connect")
