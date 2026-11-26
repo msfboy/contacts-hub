@@ -34,5 +34,5 @@ RUN mkdir -p /data
 
 EXPOSE 8080
 
-# 1 worker Gunicorn + 4 threads (indispensable pour SQLite WAL + schedulers uniques)
-CMD ["sh", "-c", "gunicorn app:app --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:${PORT:-8080}"]
+# 1 worker Gunicorn + 4 threads configurés dans gunicorn.conf.py (lit $PORT en Python)
+CMD ["gunicorn", "app:app"]
