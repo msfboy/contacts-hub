@@ -2,25 +2,24 @@ import concurrent.futures
 import html
 import re
 import urllib.parse
-import urllib.request
 from typing import Any, Dict, List
 
 import connectors
 import enrichment
+import net_guard
 import parsers
 
 
 def _fetch_html(url: str, timeout: float = 5.0) -> str:
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; ContactsHub-Prospector/1.0)"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            ctype = (resp.headers.get("Content-Type") or "").lower()
-            if "text" not in ctype and "html" not in ctype and ctype:
-                return ""
-            return resp.read(120000).decode("utf-8", errors="ignore")
+        body, _ = net_guard.safe_fetch_text(
+            url,
+            timeout=timeout,
+            max_bytes=120000,
+            user_agent="Mozilla/5.0 (compatible; ContactsHub-Prospector/1.0)",
+            require_text_content=True,
+        )
+        return body
     except Exception:
         return ""
 

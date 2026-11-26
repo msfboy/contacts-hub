@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -17,6 +18,64 @@ else:
     DATA_DIR = BASE_DIR
 os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "contacts.db")
+SECRETS_PATH = os.path.join(DATA_DIR, ".contactshub_secrets.json")
+
+
+def _load_local_secrets() -> Dict[str, str]:
+    try:
+        if os.path.isfile(SECRETS_PATH):
+            with open(SECRETS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return {str(k): str(v) for k, v in data.items() if v}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_local_secrets(data: Dict[str, str]) -> None:
+    tmp_path = SECRETS_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    try:
+        os.chmod(tmp_path, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp_path, SECRETS_PATH)
+
+
+def get_or_create_local_secret(name: str, env_var: str = "", legacy_db_key: str = "") -> str:
+    if env_var:
+        env_val = os.environ.get(env_var, "").strip()
+        if env_val:
+            return env_val
+    store = _load_local_secrets()
+    if store.get(name):
+        return store[name]
+    val = ""
+    if legacy_db_key:
+        try:
+            with get_conn() as conn:
+                conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (legacy_db_key,)).fetchone()
+                if row and row["value"]:
+                    val = str(row["value"]).strip()
+                    # Migrate out of contacts.db so DB backups never leak keys
+                    conn.execute("DELETE FROM app_settings WHERE key = ?", (legacy_db_key,))
+        except Exception:
+            pass
+    if not val:
+        val = secrets.token_hex(32)
+    store[name] = val
+    try:
+        _save_local_secrets(store)
+    except Exception:
+        pass
+    return val
+
+
+def get_wa_bridge_secret() -> str:
+    return get_or_create_local_secret("wa_bridge_secret", env_var="WA_BRIDGE_SECRET")
 
 
 # ---------------- SECRET ENCRYPTION AT REST (STDLIB AUTHENTICATED CTR) ----------------
@@ -25,14 +84,14 @@ def _get_master_key() -> bytes:
     env_k = os.environ.get("CONTACTSHUB_MASTER_KEY", "").strip()
     if env_k:
         return hashlib.sha256(env_k.encode("utf-8")).digest()
-    with get_conn() as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        row = conn.execute("SELECT value FROM app_settings WHERE key = 'master_enc_key'").fetchone()
-        if row and row["value"]:
-            return bytes.fromhex(row["value"])
-        raw = secrets.token_bytes(32)
-        conn.execute("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('master_enc_key', ?)", (raw.hex(),))
-        return raw
+    hex_key = get_or_create_local_secret("master_enc_key", legacy_db_key="master_enc_key")
+    try:
+        raw = bytes.fromhex(hex_key)
+        if len(raw) == 32:
+            return raw
+    except ValueError:
+        pass
+    return hashlib.sha256(hex_key.encode("utf-8")).digest()
 
 
 def _keystream(key: bytes, nonce: bytes, length: int) -> bytes:
@@ -115,13 +174,30 @@ def classify_email(email: str) -> str:
 
 
 def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=15.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 15000")
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def create_hot_backup(dest_path: str) -> str:
+    """Create a transactionally consistent SQLite hot backup (safe under WAL mode)."""
+    os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
+    src = get_conn()
+    dst = sqlite3.connect(dest_path)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    return dest_path
 
 
 def init_db() -> None:
     with get_conn() as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS contacts (
@@ -744,6 +820,20 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_type ON contacts(email_type)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_ws ON contacts(workspace_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_score ON contacts(lead_score DESC, updated_at DESC)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_activities_contact ON contact_activities(contact_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_contact_done ON contact_tasks(contact_id, done)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_email_logs_contact ON email_logs(contact_id, sent_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_seq_enroll_due ON sequence_enrollments(sequence_id, state, next_send_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_form_subs_form ON form_submissions(form_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_ws ON student_payments(workspace_id)")
+        try:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_appt_active_slot "
+                "ON appointments(appointment_date, appointment_time) WHERE status != 'cancelled'"
+            )
+        except sqlite3.IntegrityError:
+            pass
 
         # Add workspace_id column safely to secondary tables for SaaS multi-tenancy
         for tbl in ("lead_forms", "sequences", "smart_segments", "users"):

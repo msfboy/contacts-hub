@@ -352,6 +352,7 @@
                 <button type="button" id="clearSigBtn" style="border:0;background:none;color:var(--primary);cursor:pointer;font-size:12px;font-weight:600;">Effacer</button>
               </div>
               <div class="sig-wrap"><canvas id="sigCanvas" width="700" height="110"></canvas></div>
+              <input type="hidden" name="signature_data" id="sigData" value="" />
             </div>
 
             <button type="submit" class="submit-btn no-print">{{ form.cta_text or '✅ Valider mon inscription' }}</button>
@@ -373,6 +374,8 @@
       });
     }
     const canvas = document.getElementById("sigCanvas");
+    const sigDataInput = document.getElementById("sigData");
+    let hasSigned = false;
     if (canvas) {
       const ctx = canvas.getContext("2d");
       ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.strokeStyle = "#0b2545";
@@ -382,12 +385,31 @@
         const pt = e.touches ? e.touches[0] : e;
         return { x: (pt.clientX - r.left) * (canvas.width / r.width), y: (pt.clientY - r.top) * (canvas.height / r.height) };
       };
-      const start = (e) => { drawing = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+      const start = (e) => { drawing = true; hasSigned = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
       const move = (e) => { if (!drawing) return; e.preventDefault(); const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
       const stop = () => { drawing = false; };
       canvas.addEventListener("mousedown", start); canvas.addEventListener("mousemove", move); window.addEventListener("mouseup", stop);
       canvas.addEventListener("touchstart", start, { passive: false }); canvas.addEventListener("touchmove", move, { passive: false }); window.addEventListener("touchend", stop);
-      document.getElementById("clearSigBtn")?.addEventListener("click", () => ctx.clearRect(0, 0, canvas.width, canvas.height));
+      document.getElementById("clearSigBtn")?.addEventListener("click", () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        hasSigned = false;
+        if (sigDataInput) sigDataInput.value = "";
+      });
+      document.getElementById("trainingForm")?.addEventListener("submit", () => {
+        if (sigDataInput && hasSigned) {
+          sigDataInput.value = canvas.toDataURL("image/png");
+        }
+      });
+    }
+    const btnTopWa = document.getElementById("btnTopWa");
+    if (btnTopWa) {
+      btnTopWa.addEventListener("click", () => {
+        const waNum = {{ (cfg.whatsapp_number or '') | tojson }}.replace(/\D+/g, "");
+        if (!waNum) return;
+        const dossier = document.getElementById("dossierDisplay")?.textContent?.trim() || "";
+        const msg = `Bonjour, je souhaite confirmer mon inscription (${dossier}) pour {{ form.title }}.`;
+        window.open(`https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`, "_blank", "noopener,noreferrer");
+      });
     }
   </script>
 </body>

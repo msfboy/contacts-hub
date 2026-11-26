@@ -79,23 +79,37 @@ def _send_wa_async(phone: str, text: str) -> None:
 
 
 def create_appointment(data: Dict[str, Any]) -> Dict[str, Any]:
-    full_name = (data.get("full_name") or "").strip()
+    import sqlite3 as _sqlite3
+
+    full_name = (data.get("full_name") or "").strip()[:120]
     phone = wa_client.format_plus_phone(data.get("phone") or "")
-    email = (data.get("email") or "").strip().lower()
-    topic = (data.get("topic") or "Test de niveau d'anglais gratuit").strip()
-    mode = (data.get("mode") or "Présentiel").strip()
+    email = (data.get("email") or "").strip().lower()[:160]
+    topic = (data.get("topic") or "Test de niveau d'anglais gratuit").strip()[:160]
+    mode = (data.get("mode") or "Présentiel").strip()[:60]
     appt_date = (data.get("appointment_date") or "").strip()
     appt_time = (data.get("appointment_time") or "").strip()
-    notes = (data.get("notes") or "").strip()
+    notes = (data.get("notes") or "").strip()[:500]
     ws_id = int(data.get("workspace_id") or 1)
 
     if not full_name or not phone or not appt_date or not appt_time:
         return {"ok": False, "error": "Nom complet, téléphone WhatsApp, date et heure sont requis."}
 
+    try:
+        parsed_date = datetime.strptime(appt_date, "%Y-%m-%d").date()
+    except ValueError:
+        return {"ok": False, "error": "Format de date invalide (YYYY-MM-DD attendu)."}
+    if parsed_date < datetime.now().date():
+        return {"ok": False, "error": "Impossible de réserver une date passée."}
+
+    cfg = get_booking_settings()
+    allowed_slots = cfg.get("slots") or []
+    if allowed_slots and appt_time not in allowed_slots:
+        return {"ok": False, "error": f"Créneau horaire invalide : {appt_time}."}
+
     if appt_time in get_booked_slots(appt_date):
         return {"ok": False, "error": f"Le créneau {appt_time} du {appt_date} est déjà réservé. Choisissez une autre heure."}
 
-    booking_ref = f"RDV-{datetime.now().strftime('%Y%m%d')}-{secrets.randbelow(9000) + 1000}"
+    booking_ref = f"RDV-{datetime.now().strftime('%Y%m%d')}-{secrets.token_hex(3).upper()}"
     now = _now()
     digits = wa_client.normalize_digits(phone)
     crm_email = email or f"rdv.{digits}@booking.local"
@@ -114,35 +128,36 @@ def create_appointment(data: Dict[str, Any]) -> Dict[str, Any]:
         extra_tag="RDV Test Niveau",
     )
 
-    with db.get_conn() as conn:
-        c = conn.execute("SELECT id FROM contacts WHERE email = ?", (crm_email,)).fetchone()
-        cid = int(c["id"]) if c else None
-        if cid:
-            conn.execute(
-                "UPDATE contacts SET lead_score = MAX(lead_score, 92), workspace_id = COALESCE(workspace_id, ?), updated_at = ? WHERE id = ?",
-                (ws_id, now, cid),
+    try:
+        with db.get_conn() as conn:
+            c = conn.execute("SELECT id FROM contacts WHERE email = ?", (crm_email,)).fetchone()
+            cid = int(c["id"]) if c else None
+            cur = conn.execute(
+                """
+                INSERT INTO appointments (
+                    booking_ref, contact_id, full_name, phone, email, topic, mode,
+                    appointment_date, appointment_time, status, notes, workspace_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)
+                """,
+                (booking_ref, cid, full_name, phone, email, topic, mode, appt_date, appt_time, notes, ws_id, now),
             )
-            conn.execute(
-                "INSERT INTO contact_activities (contact_id, kind, content, created_at) VALUES (?, 'meeting', ?, ?)",
-                (cid, f"📅 RDV confirmé ({booking_ref}) : {topic} ({mode}) le {appt_date} à {appt_time}", now),
-            )
-            conn.execute(
-                "INSERT INTO contact_tasks (contact_id, title, due_date, done, created_at) VALUES (?, ?, ?, 0, ?)",
-                (cid, f"RDV {appt_time} — {topic} ({full_name})", appt_date, now),
-            )
+            aid = cur.lastrowid
+            if cid:
+                conn.execute(
+                    "UPDATE contacts SET lead_score = MAX(COALESCE(lead_score, 0), 92), workspace_id = COALESCE(workspace_id, ?), updated_at = ? WHERE id = ?",
+                    (ws_id, now, cid),
+                )
+                conn.execute(
+                    "INSERT INTO contact_activities (contact_id, kind, content, created_at) VALUES (?, 'meeting', ?, ?)",
+                    (cid, f"📅 RDV confirmé ({booking_ref}) : {topic} ({mode}) le {appt_date} à {appt_time}", now),
+                )
+                conn.execute(
+                    "INSERT INTO contact_tasks (contact_id, title, due_date, done, created_at) VALUES (?, ?, ?, 0, ?)",
+                    (cid, f"RDV {appt_time} — {topic} ({full_name})", appt_date, now),
+                )
+    except _sqlite3.IntegrityError:
+        return {"ok": False, "error": f"Le créneau {appt_time} du {appt_date} vient d'être réservé. Choisissez une autre heure."}
 
-        cur = conn.execute(
-            """
-            INSERT INTO appointments (
-                booking_ref, contact_id, full_name, phone, email, topic, mode,
-                appointment_date, appointment_time, status, notes, workspace_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)
-            """,
-            (booking_ref, cid, full_name, phone, email, topic, mode, appt_date, appt_time, notes, ws_id, now),
-        )
-        aid = cur.lastrowid
-
-    cfg = get_booking_settings()
     ws_name = cfg["workspace"].get("name") or "MSF'S English Learning Academy"
     loc = cfg["location"]
     first = full_name.split(" ")[0]

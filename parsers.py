@@ -178,6 +178,8 @@ def _rows_to_contacts(rows: List[List[Any]]) -> List[Dict[str, str]]:
                 return ""
 
             for em in emails:
+                if not _is_valid_email(em):
+                    continue
                 contacts.append(
                     {
                         "email": em.lower(),
@@ -198,7 +200,7 @@ def _rows_to_contacts(rows: List[List[Any]]) -> List[Dict[str, str]]:
             if not cells:
                 continue
             row_text = " | ".join(cells)
-            emails = EMAIL_REGEX.findall(row_text)
+            emails = [e for e in EMAIL_REGEX.findall(row_text) if _is_valid_email(e)]
             if not emails:
                 continue
             non_email_cells = [c for c in cells if not EMAIL_REGEX.search(c)]
@@ -218,6 +220,23 @@ def _decode_bytes(raw: bytes) -> str:
     return raw.decode("utf-8", errors="ignore")
 
 
+MAX_PARSED_ROWS = 50000
+MAX_PDF_PAGES = 200
+MAX_ZIP_UNCOMPRESSED_BYTES = 100 * 1024 * 1024  # 100 Mo anti-Zip-Bomb
+
+
+def _check_zip_bomb(path: str) -> None:
+    import zipfile
+    if not zipfile.is_zipfile(path):
+        return
+    total_size = 0
+    with zipfile.ZipFile(path, "r") as zf:
+        for info in zf.infolist():
+            total_size += info.file_size
+            if total_size > MAX_ZIP_UNCOMPRESSED_BYTES:
+                raise ValueError("Archive trop volumineuse après décompression (protection anti-Zip-Bomb).")
+
+
 def _parse_csv_text(text: str) -> List[Dict[str, str]]:
     # Handle LinkedIn Connections.csv preamble ("Notes: ...")
     lines = text.splitlines()
@@ -234,17 +253,27 @@ def _parse_csv_text(text: str) -> List[Dict[str, str]]:
         delim = ";" if sample.count(";") > sample.count(",") else ","
 
     reader = csv.reader(io.StringIO(text), delimiter=delim)
-    rows = [r for r in reader if any(c.strip() for c in r)]
+    rows = []
+    for r in reader:
+        if any(c.strip() for c in r):
+            rows.append(r)
+            if len(rows) >= MAX_PARSED_ROWS:
+                break
     return _rows_to_contacts(rows)
 
 
 def _parse_xlsx(path: str) -> List[Dict[str, str]]:
+    _check_zip_bomb(path)
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     all_contacts: List[Dict[str, str]] = []
     try:
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
-            rows = [list(r) for r in ws.iter_rows(values_only=True)]
+            rows = []
+            for r in ws.iter_rows(values_only=True):
+                rows.append(list(r))
+                if len(rows) >= MAX_PARSED_ROWS:
+                    break
             all_contacts.extend(_rows_to_contacts(rows))
     finally:
         wb.close()
@@ -376,7 +405,7 @@ def _parse_docx(path: str) -> List[Dict[str, str]]:
 def _parse_pdf(path: str) -> List[Dict[str, str]]:
     reader = PdfReader(path)
     chunks: List[str] = []
-    for page in reader.pages:
+    for page in reader.pages[:MAX_PDF_PAGES]:
         try:
             txt = page.extract_text()
             if txt:
@@ -396,10 +425,11 @@ def parse_file(path: str) -> List[Dict[str, str]]:
         xls = pd.read_excel(path, sheet_name=None, header=None)
         contacts: List[Dict[str, str]] = []
         for _, df in xls.items():
-            rows = df.where(df.notna(), None).values.tolist()
+            rows = df.head(MAX_PARSED_ROWS).where(df.notna(), None).values.tolist()
             contacts.extend(_rows_to_contacts(rows))
         return contacts
     if ext == ".docx":
+        _check_zip_bomb(path)
         return _parse_docx(path)
     if ext == ".pdf":
         return _parse_pdf(path)

@@ -1,9 +1,11 @@
 import email as email_lib
 import html
 import imaplib
+import logging
 import random
 import re
 import smtplib
+import ssl
 import threading
 import time
 import uuid
@@ -18,6 +20,14 @@ import dns.resolver
 
 import db
 import services
+
+logger = logging.getLogger(__name__)
+_smtp_lock = threading.Lock()
+_seq_process_lock = threading.Lock()
+
+
+def _clean_header(val: str) -> str:
+    return re.sub(r"[\r\n]+", " ", str(val or "")).strip()
 
 
 def _strip_html(raw: str) -> str:
@@ -139,8 +149,9 @@ def _pick_smtp_account() -> Optional[Dict[str, Any]]:
                 return d
             return None
 
-    chosen = rows[_smtp_rr_index % len(rows)]
-    _smtp_rr_index += 1
+    with _smtp_lock:
+        chosen = rows[_smtp_rr_index % len(rows)]
+        _smtp_rr_index += 1
     return chosen
 
 
@@ -207,14 +218,16 @@ def send_single_tracked_email(
     )
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = subj
-    from_name = (smtp_acc.get("from_name") or "").strip()
-    username = smtp_acc["username"].strip()
+    msg["Subject"] = _clean_header(subj)
+    from_name = _clean_header(smtp_acc.get("from_name") or "")
+    username = _clean_header(smtp_acc["username"])
+    to_email = _clean_header(contact["email"])
     smtp_password = db.decrypt_secret(smtp_acc.get("password") or "")
     msg["From"] = formataddr((from_name, username)) if from_name else username
-    msg["To"] = contact["email"]
+    msg["To"] = to_email
     if include_unsubscribe:
         msg["List-Unsubscribe"] = f"<{unsub_url}>"
+        msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
     msg.attach(MIMEText(plain_full, "plain", "utf-8"))
     msg.attach(MIMEText(html_full, "html", "utf-8"))
 
@@ -223,9 +236,9 @@ def send_single_tracked_email(
         server = smtplib.SMTP(smtp_acc["host"], int(smtp_acc.get("port") or 587), timeout=20)
         try:
             if smtp_acc.get("use_tls", 1):
-                server.starttls()
+                server.starttls(context=ssl.create_default_context())
             server.login(username, smtp_password)
-            server.sendmail(username, [contact["email"]], msg.as_string())
+            server.sendmail(username, [to_email], msg.as_string())
         finally:
             try:
                 server.quit()
@@ -272,6 +285,15 @@ def send_single_tracked_email(
 
 
 def process_due_sequences(max_batch: int = 10, apply_delay: bool = False, base_url: str = "http://127.0.0.1:5050") -> Dict[str, Any]:
+    if not _seq_process_lock.acquire(blocking=False):
+        return {"processed": 0, "sent": 0, "errors": 0, "completed": 0, "skipped_busy": True}
+    try:
+        return _process_due_sequences_locked(max_batch=max_batch, apply_delay=apply_delay, base_url=base_url)
+    finally:
+        _seq_process_lock.release()
+
+
+def _process_due_sequences_locked(max_batch: int = 10, apply_delay: bool = False, base_url: str = "http://127.0.0.1:5050") -> Dict[str, Any]:
     now_iso = datetime.now().isoformat(timespec="seconds")
     sent = 0
     errors = 0
@@ -544,7 +566,7 @@ def start_sequence_scheduler(interval_seconds: int = 45) -> None:
                         check_replies_and_bounces(workspace_id=1)
                 process_due_sequences(max_batch=5, apply_delay=True)
             except Exception:
-                pass
+                logger.exception("Erreur dans la boucle du scheduler de séquences")
 
     t = threading.Thread(target=_loop, daemon=True)
     t.start()

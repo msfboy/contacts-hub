@@ -37,10 +37,22 @@ def create_payment(data: Dict[str, Any]) -> Dict[str, Any]:
     ws_id = int(data.get("workspace_id") or 1)
     paid_at = (data.get("paid_at") or datetime.now().strftime("%Y-%m-%d")).strip()
     now = _now()
-    receipt_num = f"REC-{datetime.now().strftime('%Y%m%d')}-{secrets.randbelow(9000) + 1000}"
+    receipt_num = f"REC-{datetime.now().strftime('%Y%m%d')}-{secrets.token_hex(3).upper()}"
 
     cid = data.get("contact_id")
     with db.get_conn() as conn:
+        if ref:
+            dup = conn.execute(
+                """
+                SELECT id, receipt_num FROM student_payments
+                WHERE COALESCE(workspace_id, 1) = ? AND LOWER(payment_method) = LOWER(?) AND payment_ref = ?
+                LIMIT 1
+                """,
+                (ws_id, method, ref),
+            ).fetchone()
+            if dup:
+                return {"ok": False, "error": f"Référence de paiement déjà enregistrée (reçu {dup['receipt_num']}).", "duplicate": True, "receipt_num": dup["receipt_num"]}
+
         if not cid and student_email:
             r = conn.execute("SELECT id FROM contacts WHERE email = ?", (student_email,)).fetchone()
             if r:
@@ -83,8 +95,53 @@ def create_payment(data: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "id": pid, "receipt_num": receipt_num}
 
 
+def _student_course_key(r: Dict[str, Any]) -> str:
+    ident = f"cid:{r['contact_id']}" if r.get("contact_id") else f"name:{(r.get('student_name') or '').strip().lower()}"
+    return f"{ident}::{(r.get('course_name') or '').strip().lower()}"
+
+
 def list_payments(search: str = "", workspace_id: int = 1) -> Dict[str, Any]:
     with db.get_conn() as conn:
+        # Full SQL aggregation across ALL workspace payments (no LIMIT 300 truncation)
+        agg_rows = conn.execute(
+            """
+            SELECT
+                CASE WHEN contact_id IS NOT NULL THEN 'cid:' || contact_id
+                     ELSE 'name:' || LOWER(TRIM(student_name)) END AS skey,
+                LOWER(TRIM(course_name)) AS ckey,
+                SUM(amount_paid) AS cum_paid,
+                MAX(total_fee) AS eff_fee
+            FROM student_payments
+            WHERE COALESCE(workspace_id, 1) = ?
+            GROUP BY skey, ckey
+            """,
+            (workspace_id,),
+        ).fetchall()
+        cum_map: Dict[str, float] = {}
+        fee_map: Dict[str, float] = {}
+        for a in agg_rows:
+            k = f"{a['skey']}::{a['ckey']}"
+            cum_map[k] = float(a["cum_paid"] or 0.0)
+            fee_map[k] = float(a["eff_fee"] or 0.0)
+
+        method_rows = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(payment_method, ''), 'Autre') AS m, SUM(amount_paid) AS s, COUNT(*) AS cnt
+            FROM student_payments
+            WHERE COALESCE(workspace_id, 1) = ?
+            GROUP BY m
+            """,
+            (workspace_id,),
+        ).fetchall()
+        by_method: Dict[str, float] = {}
+        total_collected = 0.0
+        total_count = 0
+        for mr in method_rows:
+            amt = float(mr["s"] or 0.0)
+            by_method[mr["m"]] = amt
+            total_collected += amt
+            total_count += int(mr["cnt"] or 0)
+
         rows = [
             dict(r)
             for r in conn.execute(
@@ -97,26 +154,14 @@ def list_payments(search: str = "", workspace_id: int = 1) -> Dict[str, Any]:
                 (workspace_id,),
             ).fetchall()
         ]
-        # Compute cumulative paid per (student_name, course_name) to show accurate remaining balance
-        cum_map: Dict[str, float] = {}
-        fee_map: Dict[str, float] = {}
-        for r in rows:
-            key = f"{r['student_name'].lower()}::{r['course_name'].lower()}"
-            cum_map[key] = cum_map.get(key, 0.0) + float(r["amount_paid"] or 0)
-            fee_map[key] = max(fee_map.get(key, 0.0), float(r["total_fee"] or 0))
 
         q = search.strip().lower()
         items = []
-        total_collected = 0.0
-        by_method: Dict[str, float] = {}
         for r in rows:
-            key = f"{r['student_name'].lower()}::{r['course_name'].lower()}"
-            r["cumulative_paid"] = cum_map[key]
-            r["effective_fee"] = fee_map[key]
-            r["remaining_balance"] = max(0.0, fee_map[key] - cum_map[key])
-            total_collected += float(r["amount_paid"] or 0)
-            m = r["payment_method"] or "Autre"
-            by_method[m] = by_method.get(m, 0.0) + float(r["amount_paid"] or 0)
+            key = _student_course_key(r)
+            r["cumulative_paid"] = cum_map.get(key, float(r["amount_paid"] or 0))
+            r["effective_fee"] = fee_map.get(key, float(r["total_fee"] or 0))
+            r["remaining_balance"] = max(0.0, r["effective_fee"] - r["cumulative_paid"])
             if q:
                 hay = f"{r['receipt_num']} {r['student_name']} {r['student_phone']} {r['course_name']} {r['payment_method']} {r['payment_ref']}".lower()
                 if q not in hay:
@@ -127,7 +172,7 @@ def list_payments(search: str = "", workspace_id: int = 1) -> Dict[str, Any]:
         return {
             "items": items,
             "summary": {
-                "count": len(rows),
+                "count": total_count,
                 "total_collected": total_collected,
                 "total_remaining": total_remaining,
                 "by_method": by_method,
@@ -141,18 +186,30 @@ def get_receipt_data(pid: int) -> Optional[Dict[str, Any]]:
         if not row:
             return None
         p = dict(row)
-        ws = conn.execute("SELECT * FROM workspaces WHERE id = ?", (p.get("workspace_id") or 1,)).fetchone()
+        ws_id = p.get("workspace_id") or 1
+        ws = conn.execute("SELECT * FROM workspaces WHERE id = ?", (ws_id,)).fetchone()
         ws_dict = dict(ws) if ws else {"name": "MSF'S English Learning Academy", "tagline": "Centre de Formation", "currency": "FCFA", "primary_color": "#2563eb"}
 
-        # Cumulative paid for same student + course
-        cum = conn.execute(
-            """
-            SELECT SUM(amount_paid) AS s, MAX(total_fee) AS f
-            FROM student_payments
-            WHERE LOWER(student_name) = LOWER(?) AND LOWER(course_name) = LOWER(?)
-            """,
-            (p["student_name"], p["course_name"]),
-        ).fetchone()
+        # Cumulative paid scoped to workspace + contact_id (if known) + course
+        if p.get("contact_id"):
+            cum = conn.execute(
+                """
+                SELECT SUM(amount_paid) AS s, MAX(total_fee) AS f
+                FROM student_payments
+                WHERE COALESCE(workspace_id, 1) = ? AND contact_id = ? AND LOWER(TRIM(course_name)) = LOWER(TRIM(?))
+                """,
+                (ws_id, p["contact_id"], p["course_name"]),
+            ).fetchone()
+        else:
+            cum = conn.execute(
+                """
+                SELECT SUM(amount_paid) AS s, MAX(total_fee) AS f
+                FROM student_payments
+                WHERE COALESCE(workspace_id, 1) = ? AND contact_id IS NULL
+                  AND LOWER(TRIM(student_name)) = LOWER(TRIM(?)) AND LOWER(TRIM(course_name)) = LOWER(TRIM(?))
+                """,
+                (ws_id, p["student_name"], p["course_name"]),
+            ).fetchone()
         cum_paid = float(cum["s"] or p["amount_paid"] or 0)
         eff_fee = float(cum["f"] or p["total_fee"] or 0)
         remaining = max(0.0, eff_fee - cum_paid)

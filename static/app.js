@@ -24,7 +24,50 @@ function esc(str) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function safeUrl(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s) return "#";
+  try {
+    const u = new URL(s, window.location.origin);
+    if (u.protocol === "http:" || u.protocol === "https:") return u.href;
+  } catch {}
+  return "#";
+}
+
+function sanitizeHtml(dirty) {
+  const doc = new DOMParser().parseFromString(String(dirty ?? ""), "text/html");
+  const blockedTags = new Set(["script", "iframe", "object", "embed", "svg", "math", "form", "style", "link", "meta", "base"]);
+  const walk = (node) => {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        const tag = child.tagName.toLowerCase();
+        if (blockedTags.has(tag)) {
+          child.remove();
+          continue;
+        }
+        for (const attr of Array.from(child.attributes)) {
+          const name = attr.name.toLowerCase();
+          const val = (attr.value || "").trim().toLowerCase();
+          if (name.startsWith("on") || name === "srcdoc") {
+            child.removeAttribute(attr.name);
+          } else if ((name === "href" || name === "src" || name === "action") && /^(javascript|vbscript|data):/i.test(val)) {
+            child.removeAttribute(attr.name);
+          }
+        }
+        walk(child);
+      }
+    }
+  };
+  walk(doc.body);
+  return doc.body.innerHTML;
+}
+
+function getCsrfToken() {
+  return document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || "";
 }
 
 function fmtSize(bytes) {
@@ -44,7 +87,15 @@ function toast(msg, type = "") {
 }
 
 async function api(url, opts = {}) {
-  const res = await fetch(url, opts);
+  const method = (opts.method || "GET").toUpperCase();
+  const headers = new Headers(opts.headers || {});
+  if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+    const tok = getCsrfToken();
+    if (tok && !headers.has("X-CSRF-Token")) {
+      headers.set("X-CSRF-Token", tok);
+    }
+  }
+  const res = await fetch(url, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Erreur HTTP ${res.status}`);
   return data;
@@ -436,7 +487,7 @@ async function loadContacts() {
             ? c.tags.split(",").map((t) => `<span class="badge badge-tag">${esc(t.trim())}</span>`).join("")
             : '<span style="color:#cbd5e1">—</span>';
           const webLink = c.website
-            ? `<a href="${esc(c.website)}" target="_blank" rel="noopener" style="font-size:11.5px;color:#4f46e5;text-decoration:none;">🌐</a>`
+            ? `<a href="${esc(safeUrl(c.website))}" target="_blank" rel="noopener noreferrer" style="font-size:11.5px;color:#4f46e5;text-decoration:none;">🌐</a>`
             : "";
           return `
             <tr>
@@ -1586,7 +1637,7 @@ function selectTemplate(id) {
   $("tplBody").value = t.body;
   if ($("tplBodyVisual")) {
     $("tplBodyVisual").innerHTML = /<[a-z][\s\S]*>/i.test(t.body || "")
-      ? t.body
+      ? sanitizeHtml(t.body)
       : esc(t.body || "").replace(/\n/g, "<br>");
   }
 }
@@ -2123,7 +2174,7 @@ async function openProfileModal(cid) {
       `${scoreBadge(c.lead_score)} ${emailTypeBadge(c.email_type)} ${mxBadge(c.mx_status)} ${statusBadge(c.status)}` +
       (c.phone ? ` <button class="btn btn-primary btn-sm" id="profCallBtn" title="Appeler ${esc(c.phone)}">📞 Appeler</button>` : "") +
       (c.phone ? ` <button class="btn btn-secondary btn-sm" id="profWaBtn" title="Ouvrir WhatsApp interne">💬 WhatsApp</button>` : "") +
-      (c.website ? ` <a href="${esc(c.website)}" target="_blank" class="badge badge-manual">🌐 ${esc(c.website)}</a>` : "") +
+      (c.website ? ` <a href="${esc(safeUrl(c.website))}" target="_blank" rel="noopener noreferrer" class="badge badge-manual">🌐 ${esc(c.website)}</a>` : "") +
       (c.industry ? ` <span class="badge badge-tag">${esc(c.industry)}</span>` : "");
 
     const profCallBtn = $("profCallBtn");
@@ -2280,25 +2331,35 @@ async function callContact(contact, opts = {}) {
 // ---------------- INTERNAL WHATSAPP INBOX (QR BRIDGE) ----------------
 let waActiveChat = null;
 let waPollTimer = null;
+let waPollingActive = false;
 let waLastState = "offline";
 let waConversationsCache = [];
 
 function stopWaPolling() {
+  waPollingActive = false;
   if (waPollTimer) {
-    clearInterval(waPollTimer);
+    clearTimeout(waPollTimer);
     waPollTimer = null;
   }
 }
 
 function initWaInbox() {
-  refreshWaStatus();
-  loadWaConversations();
   stopWaPolling();
-  waPollTimer = setInterval(() => {
-    refreshWaStatus(true);
-    loadWaConversations(true);
-    if (waActiveChat) loadWaMessages(waActiveChat, true);
-  }, 4000);
+  waPollingActive = true;
+  const tick = async () => {
+    if (!waPollingActive) return;
+    if (!document.hidden) {
+      await Promise.allSettled([
+        refreshWaStatus(true),
+        loadWaConversations(true),
+        waActiveChat ? loadWaMessages(waActiveChat, true) : Promise.resolve(),
+      ]);
+    }
+    if (waPollingActive) {
+      waPollTimer = setTimeout(tick, 4500);
+    }
+  };
+  tick();
 }
 
 async function refreshWaStatus(silent = false) {
@@ -3288,8 +3349,8 @@ function applyWorkspaceBranding(ws) {
   if ($("brandName")) $("brandName").textContent = name;
   if ($("brandTagline")) $("brandTagline").textContent = tagline;
   if ($("brandIcon")) {
-    if (ws.logo_url) {
-      $("brandIcon").innerHTML = `<img src="${esc(ws.logo_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />`;
+    if (ws.logo_url && safeUrl(ws.logo_url) !== "#") {
+      $("brandIcon").innerHTML = `<img src="${esc(safeUrl(ws.logo_url))}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:8px;" />`;
     } else {
       $("brandIcon").textContent = (name.trim()[0] || "@").toUpperCase();
       $("brandIcon").style.background = color;
@@ -3447,7 +3508,7 @@ $("toggleWysiwygModeBtn")?.addEventListener("click", () => {
     wyRaw.classList.remove("hidden");
     $("toggleWysiwygModeBtn").textContent = "👁 Mode Visuel";
   } else {
-    wyEditor.innerHTML = wyRaw.value;
+    wyEditor.innerHTML = sanitizeHtml(wyRaw.value);
     wyRaw.classList.add("hidden");
     wyEditor.classList.remove("hidden");
     $("toggleWysiwygModeBtn").textContent = "</> Mode HTML";
@@ -3780,9 +3841,7 @@ async function uploadSocialCsv(platform, inputEl, tagEl) {
   fd.append("tag", tagEl?.value?.trim() || (platform === "facebook" ? "Facebook Ads" : "TikTok Leads"));
   fd.append("workspace_id", String(state.workspaceId || 1));
   try {
-    const res = await fetch(`/api/social/import-csv/${platform}`, { method: "POST", body: fd });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Erreur import CSV");
+    const data = await api(`/api/social/import-csv/${platform}`, { method: "POST", body: fd });
     toast(`Import ${platform.toUpperCase()} : ${data.imported} lead(s) ajouté(s), ${data.skipped} ignoré(s) !`, "success");
     refreshAll();
   } catch (e) {
@@ -4100,7 +4159,7 @@ $("radarSearchBtn")?.addEventListener("click", async () => {
           <td><strong>${esc(it.name)}</strong><div class="contact-role">${esc(it.category || "")}</div></td>
           <td>${esc(it.phone || "—")}</td>
           <td>${esc(it.email || "—")}</td>
-          <td>${it.website ? `<a href="${esc(it.website)}" target="_blank" class="badge badge-manual">🌐 Site</a>` : "—"}</td>
+          <td>${it.website ? `<a href="${esc(safeUrl(it.website))}" target="_blank" rel="noopener noreferrer" class="badge badge-manual">🌐 Site</a>` : "—"}</td>
           <td class="contact-role">${esc(it.address || "")}</td>
         </tr>
       `

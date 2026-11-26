@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import express from "express";
 import fs from "fs";
 import path from "path";
@@ -14,11 +15,31 @@ import makeWASocket, {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.WA_BRIDGE_PORT || 5055);
 const FLASK_WEBHOOK = process.env.CONTACTSHUB_WEBHOOK || "http://127.0.0.1:5050/api/wa-bridge/webhook";
-const AUTH_DIR = path.join(__dirname, "auth_info");
+const BRIDGE_SECRET = String(process.env.WA_BRIDGE_SECRET || "").trim();
+const AUTH_DIR = process.env.WA_BRIDGE_AUTH_DIR || path.join(__dirname, "auth_info");
 
 const logger = pino({ level: "warn" });
 const app = express();
 app.use(express.json({ limit: "4mb" }));
+
+// Block DNS rebinding & enforce shared Bearer token
+const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, "127.0.0.1", "localhost"]);
+app.use((req, res, next) => {
+  const host = String(req.headers.host || "").toLowerCase();
+  if (!ALLOWED_HOSTS.has(host)) {
+    return res.status(403).json({ error: "Host non autorisé." });
+  }
+  if (BRIDGE_SECRET) {
+    const auth = String(req.headers.authorization || "");
+    const expected = `Bearer ${BRIDGE_SECRET}`;
+    const aBuf = Buffer.from(auth);
+    const eBuf = Buffer.from(expected);
+    if (aBuf.length !== eBuf.length || !crypto.timingSafeEqual(aBuf, eBuf)) {
+      return res.status(401).json({ error: "Authentification bridge invalide." });
+    }
+  }
+  next();
+});
 
 let sock = null;
 let connectionState = "disconnected"; // disconnected | connecting | qr | connected
@@ -130,9 +151,13 @@ function storeMessage(norm) {
 
 async function notifyFlask(payload) {
   try {
+    const headers = { "Content-Type": "application/json" };
+    if (BRIDGE_SECRET) {
+      headers["X-WA-Bridge-Secret"] = BRIDGE_SECRET;
+    }
     await fetch(FLASK_WEBHOOK, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(payload),
     });
   } catch {

@@ -111,10 +111,19 @@ def fetch_imap_contacts(
 ) -> Dict[str, Any]:
     host = (host or "").strip()
     username = (username or "").strip()
+    folder = (folder or "INBOX").strip()
     if not host or not username or not password:
         raise ValueError("Hôte IMAP, email et mot de passe requis.")
 
-    imap = imaplib.IMAP4_SSL(host, int(port or 993))
+    import net_guard
+    net_guard.validate_public_host(host)
+    port_num = int(port or 993)
+    if port_num not in (993, 143, 1993):
+        raise ValueError("Port IMAP non autorisé (ports acceptés : 993, 143).")
+    if not re.fullmatch(r"[a-zA-Z0-9_./ -]{1,128}", folder):
+        raise ValueError("Nom de dossier IMAP invalide.")
+
+    imap = imaplib.IMAP4_SSL(host, port_num, timeout=15)
     try:
         imap.login(username, password)
         status, _ = imap.select(folder, readonly=True)

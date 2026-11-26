@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import re
 import secrets
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -166,7 +167,7 @@ def process_facebook_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
             sent_at = datetime.fromtimestamp(ts_ms / 1000).isoformat(timespec="seconds") if ts_ms else now
 
             sender_name = ""
-            if token and not is_echo:
+            if token and not is_echo and re.fullmatch(r"[0-9]{1,32}", peer_id):
                 try:
                     r = requests.get(
                         f"https://graph.facebook.com/v20.0/{peer_id}",
@@ -199,7 +200,7 @@ def process_facebook_webhook(payload: Dict[str, Any]) -> Dict[str, Any]:
             if not leadgen_id:
                 continue
             lead_fields: Dict[str, str] = {}
-            if token:
+            if token and re.fullmatch(r"[0-9]{1,32}", leadgen_id):
                 try:
                     r = requests.get(
                         f"https://graph.facebook.com/v20.0/{leadgen_id}",

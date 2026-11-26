@@ -86,6 +86,15 @@ def _normalize_items(raw: Any) -> List[Dict[str, Any]]:
     return result
 
 
+def _validate_drive_id(raw_id: Optional[str], label: str = "ID") -> Optional[str]:
+    if not raw_id:
+        return None
+    s = str(raw_id).strip()
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{5,128}", s) or s.startswith("-"):
+        raise ValueError(f"{label} Google Drive invalide.")
+    return s
+
+
 def list_files(
     folder_id: Optional[str] = None,
     query: str = "",
@@ -93,10 +102,17 @@ def list_files(
     max_results: int = 80,
     account: Optional[str] = None,
 ) -> Tuple[bool, List[Dict[str, Any]], str]:
+    try:
+        folder_id = _validate_drive_id(folder_id, "folder_id")
+    except ValueError as exc:
+        return False, [], str(exc)
+    if file_type and file_type not in ("folder", "spreadsheet", "document", "pdf", "csv"):
+        file_type = ""
+    max_results = max(1, min(200, int(max_results or 80)))
     if query or file_type:
         args = ["--json", "readonly", "search", "--max", str(max_results)]
         if query:
-            args += ["--name-contains", query]
+            args += ["--name-contains", query.lstrip("-")[:120]]
         if folder_id:
             args += ["--parent-id", folder_id]
         if file_type:
@@ -114,8 +130,10 @@ def list_files(
 
 
 def _safe_filename(name: str) -> str:
-    cleaned = re.sub(r'[<>:"/\\|?*]+', "_", name).strip()
-    return cleaned or "drive_file"
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", str(name or "")).strip(" .")
+    if not cleaned or cleaned in (".", "..") or cleaned.upper() in ("CON", "PRN", "AUX", "NUL"):
+        return "drive_file"
+    return cleaned[:150]
 
 
 def download_file(
@@ -125,11 +143,24 @@ def download_file(
     dest_dir: str,
     account: Optional[str] = None,
 ) -> Tuple[bool, str, str]:
+    try:
+        file_id = _validate_drive_id(file_id, "file_id") or ""
+    except ValueError as exc:
+        return False, "", str(exc)
+    if not file_id:
+        return False, "", "file_id requis."
     os.makedirs(dest_dir, exist_ok=True)
     base = _safe_filename(name)
+    abs_dest = os.path.abspath(dest_dir)
+
+    def _contained(fname: str) -> str:
+        p = os.path.abspath(os.path.join(abs_dest, fname))
+        if os.path.commonpath([abs_dest, p]) != abs_dest:
+            raise ValueError("Chemin de destination invalide.")
+        return p
 
     if mime_type == GOOGLE_SHEET_MIME or mime_type == "spreadsheet":
-        out_path = os.path.join(dest_dir, f"{base}.xlsx")
+        out_path = _contained(f"{base}.xlsx")
         ok, _, err = _run_gdrive(
             ["readonly", "export", file_id, out_path, "--format", "xlsx"],
             timeout=90,
@@ -138,7 +169,7 @@ def download_file(
         return ok, out_path, err
 
     if mime_type == GOOGLE_DOC_MIME or mime_type == "document":
-        out_path = os.path.join(dest_dir, f"{base}.txt")
+        out_path = _contained(f"{base}.txt")
         ok, _, err = _run_gdrive(
             ["readonly", "export", file_id, out_path, "--format", "txt"],
             timeout=90,
@@ -146,7 +177,7 @@ def download_file(
         )
         return ok, out_path, err
 
-    out_path = os.path.join(dest_dir, base)
+    out_path = _contained(base)
     ok, _, err = _run_gdrive(
         ["readonly", "download", file_id, "--out", out_path],
         timeout=90,

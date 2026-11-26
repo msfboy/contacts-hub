@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import hmac
+import html as html_lib
 import io
 import json
 import os
@@ -8,6 +9,9 @@ import secrets
 import shutil
 import string
 import tempfile
+import threading
+import time
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
@@ -22,6 +26,7 @@ import db
 import enrichment
 import gdrive_client
 import local_radar
+import net_guard
 import parsers
 import payments_hub
 import prospecting
@@ -81,16 +86,111 @@ def _log_audit(action: str, detail: str = "") -> None:
         pass
 
 
-_sk = _get_setting("flask_secret_key")
-if not _sk:
-    _sk = secrets.token_hex(32)
-    _set_setting("flask_secret_key", _sk)
-app.secret_key = _sk
+SAAS_MODE = os.environ.get("CONTACTSHUB_SAAS_MODE") == "1" or bool(os.environ.get("RAILWAY_ENVIRONMENT"))
+if SAAS_MODE or os.environ.get("CONTACTSHUB_HTTPS") == "1":
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-services.start_background_watcher(interval_seconds=60)
+app.secret_key = db.get_or_create_local_secret(
+    "flask_secret_key",
+    env_var="FLASK_SECRET_KEY",
+    legacy_db_key="flask_secret_key",
+)
+db._get_master_key()  # Migrate master_enc_key out of contacts.db immediately on boot
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = SAAS_MODE or os.environ.get("CONTACTSHUB_HTTPS") == "1"
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 Mo
+
+# Bootstrap initial admin account from env vars in SaaS deployments
+_boot_admin = os.environ.get("CONTACTSHUB_ADMIN_USER", "").strip().lower()
+_boot_pass = os.environ.get("CONTACTSHUB_ADMIN_PASSWORD", "")
+if _boot_admin and len(_boot_pass) >= 6:
+    with db.get_conn() as _conn:
+        if _conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'").fetchone()[0] == 0:
+            _conn.execute(
+                "INSERT OR IGNORE INTO users (username, display_name, role, password_hash, created_at) VALUES (?, ?, 'admin', ?, ?)",
+                (_boot_admin, _boot_admin.title(), _hash_password(_boot_pass), datetime.now().isoformat(timespec="seconds")),
+            )
+    if SAAS_MODE and _get_setting("auth_enabled", "0") != "1":
+        _set_setting("auth_enabled", "1")
+
+if not SAAS_MODE:
+    services.start_background_watcher(interval_seconds=60)
 campaigns.start_sequence_scheduler(interval_seconds=45)
 
-PUBLIC_PREFIXES = ("/login", "/logout", "/static/", "/t/open/", "/unsubscribe/", "/api/webhooks/", "/f/", "/l/")
+PUBLIC_PREFIXES = (
+    "/healthz",
+    "/login",
+    "/logout",
+    "/static/",
+    "/t/open/",
+    "/unsubscribe/",
+    "/api/webhooks/contacts",
+    "/api/webhooks/payment",
+    "/api/wa-bridge/webhook",
+    "/webhooks/facebook",
+    "/webhooks/tiktok",
+    "/rdv",
+    "/api/booking/slots",
+    "/receipt/",
+    "/f/",
+    "/l/",
+)
+
+CSRF_EXEMPT_PREFIXES = (
+    "/api/webhooks/contacts",
+    "/api/webhooks/payment",
+    "/api/wa-bridge/webhook",
+    "/webhooks/facebook",
+    "/webhooks/tiktok",
+    "/unsubscribe/",
+    "/f/",
+    "/rdv",
+)
+
+ADMIN_ONLY_PREFIXES = (
+    "/api/admin/",
+    "/api/gdpr/",
+    "/api/smtp",
+    "/api/ai/config",
+    "/api/social/config",
+    "/api/local/",
+    "/api/watchers",
+)
+
+_RATE_LOCK = threading.Lock()
+_RATE_BUCKETS: Dict[str, List[float]] = defaultdict(list)
+
+
+def _check_rate_limit(bucket: str, max_hits: int, window_sec: int) -> bool:
+    """Return True if request is allowed, False if rate-limited."""
+    ip = (request.remote_addr or "local").strip()
+    key = f"{bucket}:{ip}"
+    now = time.monotonic()
+    cutoff = now - window_sec
+    with _RATE_LOCK:
+        hits = [t for t in _RATE_BUCKETS[key] if t > cutoff]
+        if len(hits) >= max_hits:
+            _RATE_BUCKETS[key] = hits
+            return False
+        hits.append(now)
+        _RATE_BUCKETS[key] = hits
+        return True
+
+
+def _get_csrf_token() -> str:
+    tok = session.get("csrf_token")
+    if not tok:
+        tok = secrets.token_hex(24)
+        session["csrf_token"] = tok
+    return tok
+
+
+@app.context_processor
+def _inject_csrf_token():
+    return {"csrf_token": _get_csrf_token}
 
 
 def _current_workspace_id() -> int:
@@ -101,17 +201,40 @@ def _current_workspace_id() -> int:
 
 
 @app.before_request
-def _enforce_optional_auth():
+def _enforce_security_and_auth():
+    path = request.path or ""
+
+    # 0. Disable host filesystem routes in Cloud/SaaS mode
+    if SAAS_MODE and path.startswith(("/api/local/", "/api/watchers", "/api/preview/local")):
+        return jsonify({"error": "Explorateur disque local désactivé en mode SaaS Cloud."}), 403
+
+    # 1. CSRF protection on state-changing requests (exempt signed webhooks & public forms)
+    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        if not any(path.startswith(p) for p in CSRF_EXEMPT_PREFIXES):
+            expected_csrf = session.get("csrf_token") or ""
+            provided_csrf = (
+                request.headers.get("X-CSRF-Token")
+                or request.form.get("csrf_token")
+                or ""
+            )
+            if not expected_csrf or not provided_csrf or not hmac.compare_digest(provided_csrf, expected_csrf):
+                if path.startswith("/api/"):
+                    return jsonify({"error": "Jeton CSRF invalide ou expiré. Rechargez la page."}), 403
+                return Response("Jeton CSRF invalide ou expiré. Rechargez la page.", status=403)
+
+    # 2. Optional authentication & RBAC
     if _get_setting("auth_enabled", "0") != "1":
         return None
-    path = request.path or ""
     if any(path.startswith(p) for p in PUBLIC_PREFIXES):
         return None
     if not session.get("user_id"):
         if path.startswith("/api/"):
             return jsonify({"error": "Authentification requise."}), 401
         return redirect(url_for("login_page"))
-    if path.startswith("/api/admin/") and path != "/api/admin/status" and session.get("role") != "admin":
+    is_admin_route = (
+        any(path.startswith(p) for p in ADMIN_ONLY_PREFIXES) and path != "/api/admin/status"
+    ) or path in ("/api/webhooks/info", "/api/webhooks/regenerate", "/api/backup/download", "/api/backup/gdrive")
+    if is_admin_route and session.get("role") != "admin":
         return jsonify({"error": "Accès réservé aux administrateurs."}), 403
     if session.get("role") == "viewer" and request.method in ("POST", "PUT", "DELETE"):
         if not path.startswith("/api/search/natural"):
@@ -119,9 +242,47 @@ def _enforce_optional_auth():
     return None
 
 
+@app.after_request
+def _add_security_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    if (request.path or "").startswith("/t/open/"):
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
+
+
+@app.errorhandler(413)
+def _handle_413(_exc):
+    if (request.path or "").startswith("/api/"):
+        return jsonify({"error": "Fichier trop volumineux (limite maximale : 16 Mo)."}), 413
+    return Response("Fichier trop volumineux (16 Mo max).", status=413)
+
+
+@app.errorhandler(404)
+def _handle_404(_exc):
+    if (request.path or "").startswith("/api/"):
+        return jsonify({"error": "Endpoint introuvable."}), 404
+    return Response("Page introuvable.", status=404)
+
+
+@app.errorhandler(500)
+def _handle_500(_exc):
+    if (request.path or "").startswith("/api/"):
+        return jsonify({"error": "Erreur interne du serveur."}), 500
+    return Response("Erreur interne du serveur.", status=500)
+
+
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    return jsonify({"status": "ok", "mode": "saas" if SAAS_MODE else "local"})
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
     if request.method == "POST":
+        if not _check_rate_limit("login", max_hits=10, window_sec=300):
+            return render_template("login.html", error="Trop de tentatives de connexion. Réessayez dans 5 minutes."), 429
         username = (request.form.get("username") or "").strip().lower()
         password = request.form.get("password") or ""
         with db.get_conn() as conn:
@@ -714,9 +875,11 @@ def api_gdrive_import():
 
 @app.route("/api/backup/download", methods=["GET"])
 def api_backup_download():
-    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    snap_path = os.path.join(BACKUPS_DIR, f"contactshub_backup_{stamp}.db")
+    db.create_hot_backup(snap_path)
     return send_file(
-        db.DB_PATH,
+        snap_path,
         as_attachment=True,
         download_name=f"contactshub_backup_{stamp}.db",
         mimetype="application/octet-stream",
@@ -729,7 +892,7 @@ def api_backup_gdrive():
     account = (data.get("account") or "").strip() or None
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = os.path.join(BACKUPS_DIR, f"contactshub_backup_{stamp}.db")
-    shutil.copy2(db.DB_PATH, backup_path)
+    db.create_hot_backup(backup_path)
     ok, out, err = gdrive_client.upload_backup(backup_path, account=account)
     if not ok:
         return jsonify({"error": err}), 500
@@ -1258,7 +1421,7 @@ def api_webhook_regenerate():
 def api_webhook_receive():
     expected = _get_webhook_token()
     provided = request.headers.get("X-API-Key") or request.args.get("token") or ""
-    if provided != expected:
+    if not expected or not provided or not hmac.compare_digest(provided, expected):
         return jsonify({"error": "Clé API invalide (header X-API-Key ou ?token= requis)."}), 401
 
     data = request.get_json(force=True, silent=True) or {}
@@ -1312,7 +1475,7 @@ def track_email_open(tracking_id: str):
     return Response(TRANSPARENT_GIF, mimetype="image/gif")
 
 
-@app.route("/unsubscribe/<tracking_id>", methods=["GET"])
+@app.route("/unsubscribe/<tracking_id>", methods=["GET", "POST"])
 def public_unsubscribe(tracking_id: str):
     now = datetime.now().isoformat(timespec="seconds")
     email_addr = ""
@@ -1322,20 +1485,31 @@ def public_unsubscribe(tracking_id: str):
             (tracking_id,),
         ).fetchone()
         if row:
-            email_addr = row["email"]
-            conn.execute(
-                "UPDATE contacts SET status = 'unsubscribed', updated_at = ? WHERE id = ?",
-                (now, row["contact_id"]),
-            )
-            conn.execute(
-                "UPDATE sequence_enrollments SET state = 'stopped_unsubscribed' WHERE contact_id = ? AND state = 'active'",
-                (row["contact_id"],),
-            )
+            email_addr = row["email"] or ""
+            if request.method == "POST":
+                conn.execute(
+                    "UPDATE contacts SET status = 'unsubscribed', updated_at = ? WHERE id = ?",
+                    (now, row["contact_id"]),
+                )
+                conn.execute(
+                    "UPDATE sequence_enrollments SET state = 'stopped_unsubscribed' WHERE contact_id = ? AND state = 'active'",
+                    (row["contact_id"],),
+                )
+    safe_email = html_lib.escape(email_addr or "votre email")
+    if request.method == "GET":
+        return (
+            "<!doctype html><html lang='fr'><head><meta charset='utf-8'><title>Désinscription</title>"
+            "<style>body{font-family:Arial,sans-serif;display:grid;place-items:center;min-height:100vh;background:#f8fafc;color:#0f172a;}"
+            ".box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.08);text-align:center;max-width:440px;}"
+            "button{margin-top:16px;padding:10px 22px;border:0;border-radius:8px;background:#dc2626;color:#fff;font-weight:600;cursor:pointer;}</style></head>"
+            f"<body><div class='box'><h2>Se désinscrire</h2><p>Confirmez-vous le retrait de <strong>{safe_email}</strong> de nos listes d'envoi ?</p>"
+            f"<form method='POST'><button type='submit'>Confirmer la désinscription</button></form></div></body></html>"
+        )
     return (
         "<!doctype html><html lang='fr'><head><meta charset='utf-8'><title>Désinscription</title>"
         "<style>body{font-family:Arial,sans-serif;display:grid;place-items:center;min-height:100vh;background:#f8fafc;color:#0f172a;}"
         ".box{background:#fff;padding:32px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.08);text-align:center;max-width:440px;}</style></head>"
-        f"<body><div class='box'><h2>✓ Désinscription confirmée</h2><p>L'adresse <strong>{email_addr or 'votre email'}</strong> a bien été retirée de nos listes d'envoi.</p></div></body></html>"
+        f"<body><div class='box'><h2>✓ Désinscription confirmée</h2><p>L'adresse <strong>{safe_email}</strong> a bien été retirée de nos listes d'envoi.</p></div></body></html>"
     )
 
 
@@ -1844,21 +2018,26 @@ def api_update_current_workspace():
 
 @app.route("/api/admin/status", methods=["GET"])
 def api_admin_status():
-    with db.get_conn() as conn:
-        users = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT id, username, display_name, role, created_at FROM users ORDER BY id ASC"
-            ).fetchall()
-        ]
-        audits = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT * FROM audit_logs ORDER BY id DESC LIMIT 60"
-            ).fetchall()
-        ]
+    auth_on = _get_setting("auth_enabled", "0") == "1"
+    is_admin = (not auth_on) or (session.get("role") == "admin")
+    users: List[Dict[str, Any]] = []
+    audits: List[Dict[str, Any]] = []
+    if is_admin:
+        with db.get_conn() as conn:
+            users = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT id, username, display_name, role, created_at FROM users ORDER BY id ASC"
+                ).fetchall()
+            ]
+            audits = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM audit_logs ORDER BY id DESC LIMIT 60"
+                ).fetchall()
+            ]
     return jsonify({
-        "auth_enabled": _get_setting("auth_enabled", "0") == "1",
+        "auth_enabled": auth_on,
         "current_user": {
             "username": session.get("username") or "local",
             "display_name": session.get("display_name") or "Mode Local",
@@ -1945,22 +2124,46 @@ def api_gdpr_export():
 
 @app.route("/api/gdpr/forget", methods=["POST"])
 def api_gdpr_forget():
-    data = request.get_json(force=True) or {}
+    data = request.get_json(silent=True) or {}
     em = (data.get("email") or "").strip().lower()
     if not em:
         return jsonify({"error": "Adresse email requise."}), 400
+    em_hash = hashlib.sha256(em.encode("utf-8")).hexdigest()[:12]
     with db.get_conn() as conn:
-        c = conn.execute("SELECT id FROM contacts WHERE LOWER(email) = ?", (em,)).fetchone()
+        c = conn.execute("SELECT id, phone FROM contacts WHERE LOWER(email) = ?", (em,)).fetchone()
         if not c:
             return jsonify({"error": "Aucun contact trouvé pour cette adresse."}), 404
         cid = c["id"]
+        phone = (c["phone"] or "").strip()
         conn.execute("DELETE FROM contact_activities WHERE contact_id = ?", (cid,))
         conn.execute("DELETE FROM contact_tasks WHERE contact_id = ?", (cid,))
         conn.execute("DELETE FROM sequence_enrollments WHERE contact_id = ?", (cid,))
-        conn.execute("UPDATE email_logs SET email = '[effacé RGPD]' WHERE contact_id = ?", (cid,))
+        conn.execute("DELETE FROM click_events WHERE contact_id = ?", (cid,))
+        conn.execute("DELETE FROM wa_broadcast_recipients WHERE contact_id = ?", (cid,))
+        conn.execute(
+            "UPDATE email_logs SET email = '[effacé RGPD]' WHERE contact_id = ? OR LOWER(email) = ?",
+            (cid, em),
+        )
+        conn.execute(
+            "DELETE FROM form_submissions WHERE contact_id = ? OR LOWER(email) = ?",
+            (cid, em),
+        )
+        conn.execute(
+            "UPDATE student_payments SET student_name = '[effacé RGPD]', student_email = '', student_phone = '', notes = '' WHERE contact_id = ? OR LOWER(student_email) = ?",
+            (cid, em),
+        )
+        conn.execute(
+            "DELETE FROM appointments WHERE contact_id = ? OR LOWER(email) = ?",
+            (cid, em),
+        )
+        conn.execute("DELETE FROM whatsapp_messages WHERE contact_id = ?", (cid,))
+        conn.execute("DELETE FROM whatsapp_contacts WHERE contact_id = ?", (cid,))
+        if phone:
+            conn.execute("DELETE FROM whatsapp_messages WHERE phone = ?", (phone,))
+            conn.execute("DELETE FROM whatsapp_contacts WHERE phone = ?", (phone,))
         conn.execute("DELETE FROM contacts WHERE id = ?", (cid,))
-    _log_audit("gdpr_forget", f"Droit à l'oubli appliqué pour {em}")
-    return jsonify({"ok": True, "erased": em})
+    _log_audit("gdpr_forget", f"Droit à l'oubli appliqué (sha256:{em_hash})")
+    return jsonify({"ok": True, "erased_hash": em_hash})
 
 
 # ---------------- PACK CONVERSION: WHATSAPP, CLICK TRACKING & LEAD FORMS ----------------
@@ -2023,7 +2226,11 @@ def api_wa_log():
 
 @app.route("/api/wa-bridge/webhook", methods=["POST"])
 def api_wa_bridge_webhook():
-    payload = request.get_json(force=True) or {}
+    expected = db.get_wa_bridge_secret()
+    provided = request.headers.get("X-WA-Bridge-Secret") or ""
+    if expected and (not provided or not hmac.compare_digest(provided, expected)):
+        return jsonify({"error": "Signature bridge invalide."}), 401
+    payload = request.get_json(silent=True) or {}
     res = wa_client.process_webhook_event(payload)
     return jsonify(res)
 
@@ -2178,12 +2385,19 @@ def api_social_config_save(platform: str):
 def webhook_facebook():
     if request.method == "GET":
         mode = request.args.get("hub.mode")
-        token = request.args.get("hub.verify_token")
+        token = request.args.get("hub.verify_token") or ""
         challenge = request.args.get("hub.challenge", "")
         cfg = social_hub.get_channel_config("facebook")
-        if mode == "subscribe" and token and token == cfg.get("verify_token"):
+        expected_tok = cfg.get("verify_token") or ""
+        if mode == "subscribe" and token and expected_tok and hmac.compare_digest(token, expected_tok):
             return Response(challenge, status=200, mimetype="text/plain")
         return Response("Forbidden", status=403)
+    fb_app_secret = os.environ.get("FB_APP_SECRET", "").strip()
+    if fb_app_secret:
+        sig_header = request.headers.get("X-Hub-Signature-256") or ""
+        expected_sig = "sha256=" + hmac.new(fb_app_secret.encode("utf-8"), request.get_data(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig_header, expected_sig):
+            return jsonify({"error": "Signature Meta invalide."}), 403
     payload = request.get_json(silent=True) or {}
     return jsonify(social_hub.process_facebook_webhook(payload))
 
@@ -2377,6 +2591,18 @@ def public_booking_page():
     cfg = booking_hub.get_booking_settings()
     today = datetime.now().strftime("%Y-%m-%d")
     if request.method == "POST":
+        if not _check_rate_limit("rdv", max_hits=10, window_sec=600):
+            return render_template(
+                "booking.html",
+                workspace=cfg["workspace"],
+                location=cfg["location"],
+                slots=cfg["slots"],
+                topics=cfg["topics"],
+                today=today,
+                default_date=request.form.get("appointment_date") or today,
+                confirmed=False,
+                error="Trop de demandes en peu de temps. Réessayez dans quelques minutes.",
+            ), 429
         res = booking_hub.create_appointment({
             "full_name": request.form.get("full_name"),
             "phone": request.form.get("phone"),
@@ -2624,6 +2850,10 @@ def api_create_form():
     config = data.get("config") or {}
     if not title:
         return jsonify({"error": "Titre du formulaire requis."}), 400
+    try:
+        safe_redirect = net_guard.validate_http_url_syntax(data.get("redirect_url") or "")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     now = datetime.now().isoformat(timespec="seconds")
     try:
         with db.get_conn() as conn:
@@ -2638,7 +2868,7 @@ def api_create_form():
                     (data.get("subtitle") or "").strip(),
                     (data.get("cta_text") or "✅ Valider mon inscription").strip(),
                     (data.get("tag") or "Inscrit Formation").strip(),
-                    (data.get("redirect_url") or "").strip(),
+                    safe_redirect,
                     form_kind,
                     json.dumps(config, ensure_ascii=False),
                     now,
@@ -2655,6 +2885,10 @@ def api_update_form(fid: int):
     title = (data.get("title") or "").strip()
     if not title:
         return jsonify({"error": "Titre requis."}), 400
+    try:
+        safe_redirect = net_guard.validate_http_url_syntax(data.get("redirect_url") or "")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     config = data.get("config") or {}
     with db.get_conn() as conn:
         conn.execute(
@@ -2669,7 +2903,7 @@ def api_update_form(fid: int):
                 (data.get("subtitle") or "").strip(),
                 (data.get("cta_text") or "✅ Valider mon inscription").strip(),
                 (data.get("tag") or "Inscrit Formation").strip(),
-                (data.get("redirect_url") or "").strip(),
+                safe_redirect,
                 data.get("form_kind") if data.get("form_kind") in ("simple", "training") else "training",
                 json.dumps(config, ensure_ascii=False),
                 fid,
@@ -2998,7 +3232,7 @@ def api_generate_copy():
 def api_webhook_payment():
     expected = _get_webhook_token()
     provided = request.headers.get("X-API-Key") or request.args.get("token") or ""
-    if provided != expected:
+    if not expected or not provided or not hmac.compare_digest(provided, expected):
         return jsonify({"error": "Clé API invalide."}), 401
     data = request.get_json(force=True, silent=True) or {}
     em = (data.get("email") or "").strip().lower()
@@ -3030,6 +3264,24 @@ def api_webhook_payment():
                 "INSERT INTO contact_activities (contact_id, kind, content, created_at) VALUES (?, 'payment', ?, ?)",
                 (c["id"], f"💳 Paiement reçu : {amount} {currency}".strip(), now),
             )
+    try:
+        amt_float = float(str(amount).replace(" ", "").replace(",", ".") or 0)
+    except ValueError:
+        amt_float = 0.0
+    if amt_float > 0:
+        pay_res = payments_hub.create_payment({
+            "student_name": data.get("full_name") or em,
+            "student_email": em,
+            "student_phone": data.get("phone") or "",
+            "course_name": data.get("course_name") or "Paiement en ligne",
+            "amount_paid": amt_float,
+            "total_fee": float(data.get("total_fee") or amt_float),
+            "payment_method": data.get("payment_method") or "Webhook",
+            "payment_ref": data.get("payment_ref") or data.get("transaction_id") or "",
+            "notes": f"Webhook ({currency})",
+        })
+        if pay_res.get("duplicate"):
+            return jsonify({"ok": True, "duplicate": True, "receipt_num": pay_res.get("receipt_num")}), 200
     _log_audit("payment_received", f"Client {em} ({amount} {currency})")
     return jsonify({"ok": True, "client": em}), 201
 

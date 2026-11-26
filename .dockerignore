@@ -1,0 +1,30 @@
+.git
+.gitignore
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.log
+
+# Données locales & secrets (NE JAMAIS copier dans l'image Docker)
+contacts.db
+contacts.db-journal
+contacts.db-wal
+contacts.db-shm
+.contactshub_secrets.json
+backups/
+imports_cache/
+
+# Runtime Windows portable & session WhatsApp locale
+wa-bridge/node/
+wa-bridge/node_modules/
+wa-bridge/auth_info/
+wa-bridge/bridge.log
+
+# Scripts desktop Windows
+Lancer_ContactsHub.bat
+start_desktop.py
+win_ocr.ps1
+vercel.json
+.vercelignore

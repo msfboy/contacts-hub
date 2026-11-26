@@ -236,16 +236,11 @@ def search_local_businesses(keyword: str, city: str = "Lomé, Togo", engine: str
         if urls:
             try:
                 crawled = prospecting.crawl_company_websites(urls, max_sites=12)
-                by_domain: Dict[str, str] = {}
-                for c in crawled.get("items") or []:
-                    dom = (c.get("company") or c.get("website") or "").lower()
-                    em = (c.get("email") or "").strip().lower()
-                    if em and dom and dom not in by_domain:
-                        by_domain[dom] = em
+                prospects = crawled.get("prospects") or []
                 for it in items:
                     if not it.get("email") and it.get("website"):
                         w_low = it["website"].lower()
-                        for c in crawled.get("items") or []:
+                        for c in prospects:
                             cw = (c.get("website") or "").lower()
                             if cw and (cw in w_low or w_low in cw):
                                 it["email"] = c.get("email") or ""

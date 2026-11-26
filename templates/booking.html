@@ -153,13 +153,21 @@
       if (!dateInput || !slotsWrap) return;
       const d = dateInput.value;
       let booked = [];
+      let loadFailed = false;
       try {
         const res = await fetch(`/api/booking/slots?date=${encodeURIComponent(d)}`);
+        if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
         booked = data.booked || [];
-      } catch {}
+      } catch {
+        loadFailed = true;
+      }
       timeInput.value = "";
       slotsWrap.innerHTML = "";
+      if (loadFailed) {
+        slotsWrap.innerHTML = '<div style="color:#b91c1c;font-size:13px;">Impossible de charger les créneaux. Rechargez la page.</div>';
+        return;
+      }
       ALL_SLOTS.forEach((s) => {
         const btn = document.createElement("button");
         btn.type = "button";
@@ -180,6 +188,18 @@
           }
         }
         slotsWrap.appendChild(btn);
+      });
+      if (!timeInput.value) {
+        slotsWrap.insertAdjacentHTML("beforeend", '<div style="color:#b45309;font-size:13px;width:100%;margin-top:6px;">Tous les créneaux sont complets pour cette date. Choisissez un autre jour.</div>');
+      }
+    }
+    const bookingForm = document.querySelector("form[method='POST']");
+    if (bookingForm) {
+      bookingForm.addEventListener("submit", (e) => {
+        if (!timeInput?.value) {
+          e.preventDefault();
+          alert("Veuillez sélectionner un créneau horaire disponible.");
+        }
       });
     }
     if (dateInput) {

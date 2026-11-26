@@ -180,7 +180,7 @@ def compute_lead_score(contact: Dict[str, Any]) -> int:
 
     role = (contact.get("role") or "").lower()
     if role:
-        if any(w in role for w in DECISION_MAKER_WORDS):
+        if any(re.search(r"\b" + re.escape(w) + r"\b", role) for w in DECISION_MAKER_WORDS):
             score += 15
         else:
             score += 5
@@ -286,14 +286,18 @@ def run_auto_enrichment() -> Dict[str, Any]:
 
 
 def _fetch_domain_meta(domain: str) -> Dict[str, str]:
+    import net_guard
     url = f"https://{domain}"
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; ContactsHub/1.0)"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=4.5) as resp:
-            raw = resp.read(65536).decode("utf-8", errors="ignore")
+        raw, _ = net_guard.safe_fetch_text(
+            url,
+            timeout=4.5,
+            max_bytes=65536,
+            user_agent="Mozilla/5.0 (compatible; ContactsHub/1.0)",
+            require_text_content=True,
+        )
+        if not raw:
+            return {}
     except Exception:
         return {}
 
@@ -315,10 +319,12 @@ def _fetch_domain_meta(domain: str) -> Dict[str, str]:
 
     combined = f"{title} {desc}".lower()
     industry = ""
+    best_hits = 0
     for ind_name, keywords in INDUSTRY_KEYWORDS:
-        if any(kw in combined for kw in keywords):
+        hits = sum(1 for kw in keywords if re.search(r"\b" + re.escape(kw) + r"\b", combined))
+        if hits > best_hits:
+            best_hits = hits
             industry = ind_name
-            break
 
     return {"title": title, "desc": desc, "industry": industry, "website": url}
 

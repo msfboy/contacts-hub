@@ -40,9 +40,14 @@ def _find_node_exe() -> Optional[str]:
     return shutil.which("node")
 
 
+def _bridge_headers() -> Dict[str, str]:
+    secret = db.get_wa_bridge_secret()
+    return {"Authorization": f"Bearer {secret}"} if secret else {}
+
+
 def is_bridge_alive() -> bool:
     try:
-        r = requests.get(f"{BRIDGE_URL}/status", timeout=1.2)
+        r = requests.get(f"{BRIDGE_URL}/status", headers=_bridge_headers(), timeout=1.2)
         return r.status_code == 200
     except Exception:
         return False
@@ -65,15 +70,23 @@ def ensure_bridge_running() -> Dict[str, Any]:
     if os.name == "nt":
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
-    log_path = os.path.join(BRIDGE_DIR, "bridge.log")
-    log_f = open(log_path, "a", encoding="utf-8")
-    _bridge_proc = subprocess.Popen(
-        [node_exe, server_js],
-        cwd=BRIDGE_DIR,
-        stdout=log_f,
-        stderr=log_f,
-        creationflags=creationflags,
-    )
+    env = os.environ.copy()
+    env["WA_BRIDGE_SECRET"] = db.get_wa_bridge_secret()
+    flask_port = os.environ.get("PORT", "5050")
+    env.setdefault("CONTACTSHUB_WEBHOOK", f"http://127.0.0.1:{flask_port}/api/wa-bridge/webhook")
+    if os.environ.get("CONTACTSHUB_DATA_DIR"):
+        env.setdefault("WA_BRIDGE_AUTH_DIR", os.path.join(db.DATA_DIR, "wa_auth_info"))
+
+    log_path = os.path.join(db.DATA_DIR if os.environ.get("CONTACTSHUB_DATA_DIR") else BRIDGE_DIR, "bridge.log")
+    with open(log_path, "a", encoding="utf-8") as log_f:
+        _bridge_proc = subprocess.Popen(
+            [node_exe, server_js],
+            cwd=BRIDGE_DIR,
+            env=env,
+            stdout=log_f,
+            stderr=log_f,
+            creationflags=creationflags,
+        )
 
     for _ in range(25):
         time.sleep(0.25)
@@ -87,7 +100,7 @@ def bridge_get(path: str, params: Optional[Dict[str, Any]] = None, timeout: floa
     if not ensure.get("ok"):
         return {"state": "offline", "error": ensure.get("error")}
     try:
-        r = requests.get(f"{BRIDGE_URL}{path}", params=params, timeout=timeout)
+        r = requests.get(f"{BRIDGE_URL}{path}", params=params, headers=_bridge_headers(), timeout=timeout)
         return r.json()
     except Exception as exc:
         return {"state": "offline", "error": str(exc)}
@@ -98,7 +111,7 @@ def bridge_post(path: str, payload: Optional[Dict[str, Any]] = None, timeout: fl
     if not ensure.get("ok"):
         return {"ok": False, "error": ensure.get("error")}
     try:
-        r = requests.post(f"{BRIDGE_URL}{path}", json=payload or {}, timeout=timeout)
+        r = requests.post(f"{BRIDGE_URL}{path}", json=payload or {}, headers=_bridge_headers(), timeout=timeout)
         data = r.json()
         if r.status_code >= 400 and "error" not in data:
             data["error"] = f"Erreur bridge HTTP {r.status_code}"
