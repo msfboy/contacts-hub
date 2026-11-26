@@ -102,18 +102,18 @@ def search_openstreetmap(keyword: str, city: str = "Lomé, Togo", limit: int = 4
             if (tk, tv) in seen_p:
                 continue
             seen_p.add((tk, tv))
-            query_parts.append(f'node["{tk}"="{tv}"]({s},{w},{n},{e});')
-            query_parts.append(f'way["{tk}"="{tv}"]({s},{w},{n},{e});')
+            query_parts.append(f'nwr["{tk}"="{tv}"]({s},{w},{n},{e});')
     else:
-        safe_kw = re.sub(r'["\\]', "", kw)
-        query_parts.append(f'node["name"~"{safe_kw}",i]({s},{w},{n},{e});')
-        query_parts.append(f'way["name"~"{safe_kw}",i]({s},{w},{n},{e});')
+        safe_kw = re.escape(kw).replace('"', "")
+        query_parts.append(f'nwr["name"~"{safe_kw}",i]({s},{w},{n},{e});')
 
-    overpass_ql = f"[out:json][timeout:20];(\n{''.join(query_parts)}\n);out center {min(limit * 2, 120)};"
+    overpass_ql = f"[out:json][timeout:14];(\n{''.join(query_parts)}\n);out tags center {min(limit * 2, 120)};"
 
+    headers = {"User-Agent": "ContactsHub-LocalRadar/1.0 (+https://github.com/msfboy/contacts-hub)"}
     endpoints = [
         "https://overpass-api.de/api/interpreter",
-        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     ]
     data = None
     last_err = ""
@@ -122,8 +122,8 @@ def search_openstreetmap(keyword: str, city: str = "Lomé, Togo", limit: int = 4
             r = requests.post(
                 ep,
                 data={"data": overpass_ql},
-                headers={"User-Agent": "ContactsHub-LocalRadar/1.0"},
-                timeout=22,
+                headers=headers,
+                timeout=14,
             )
             if r.status_code == 200:
                 data = r.json()
@@ -132,7 +132,48 @@ def search_openstreetmap(keyword: str, city: str = "Lomé, Togo", limit: int = 4
         except Exception as exc:
             last_err = str(exc)
 
+    # Automatic fallback to Nominatim POI search if all Overpass mirrors are busy/rate-limited
     if data is None:
+        try:
+            r_nom = requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={
+                    "q": f"{keyword} {city}",
+                    "format": "json",
+                    "addressdetails": 1,
+                    "extratags": 1,
+                    "limit": min(limit, 40),
+                },
+                headers=headers,
+                timeout=12,
+            )
+            if r_nom.status_code == 200:
+                nom_items: List[Dict[str, Any]] = []
+                seen_n = set()
+                for row in r_nom.json() or []:
+                    name = (row.get("name") or (row.get("display_name") or "").split(",")[0]).strip()
+                    if not name or name.lower() in seen_n:
+                        continue
+                    seen_n.add(name.lower())
+                    ex = row.get("extratags") or {}
+                    phone = (ex.get("contact:phone") or ex.get("phone") or "").strip()
+                    email = (ex.get("contact:email") or ex.get("email") or "").strip().lower()
+                    website = (ex.get("contact:website") or ex.get("website") or ex.get("url") or "").strip()
+                    if website and not website.startswith(("http://", "https://")):
+                        website = "https://" + website
+                    nom_items.append({
+                        "name": name,
+                        "category": row.get("type") or keyword,
+                        "phone": phone,
+                        "email": email,
+                        "website": website,
+                        "address": (row.get("display_name") or city)[:160],
+                        "source": "OpenStreetMap (Nominatim)",
+                    })
+                if nom_items:
+                    return {"ok": True, "engine": "openstreetmap", "count": len(nom_items), "items": nom_items[:limit]}
+        except Exception:
+            pass
         return {"ok": False, "error": f"Serveur OpenStreetMap temporairement occupé ({last_err}). Réessayez dans quelques secondes.", "items": []}
 
     items: List[Dict[str, Any]] = []
