@@ -1193,6 +1193,8 @@ def query_contacts(
         "score_desc": "lead_score DESC, updated_at DESC",
         "name_asc": "LOWER(full_name) ASC, email ASC",
         "updated_desc": "updated_at DESC, id DESC",
+        "tag_asc": "CASE WHEN TRIM(COALESCE(tags, '')) = '' THEN 1 ELSE 0 END ASC, LOWER(tags) ASC, updated_at DESC",
+        "tag_desc": "CASE WHEN TRIM(COALESCE(tags, '')) = '' THEN 1 ELSE 0 END ASC, LOWER(tags) DESC, updated_at DESC",
     }
     order_sql = order_map.get(sort_by, "updated_at DESC, id DESC")
 

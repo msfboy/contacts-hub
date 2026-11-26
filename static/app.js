@@ -434,6 +434,9 @@ function scoreBadge(score) {
 function sourceBadge(type) {
   const map = {
     gdrive: ["Google Drive", "badge-gdrive"],
+    whatsapp: ["WhatsApp", "badge-st-client"],
+    whatsapp_group: ["Groupe WA", "badge-st-client"],
+    form: ["Formulaire", "badge-tag"],
     pc: ["PC", "badge-pc"],
     upload: ["Upload", "badge-upload"],
     imap: ["Boîte Email", "badge-perso"],
