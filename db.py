@@ -827,6 +827,9 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_seq_enroll_due ON sequence_enrollments(sequence_id, state, next_send_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_form_subs_form ON form_submissions(form_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_ws ON student_payments(workspace_id)")
+        # Clean up legacy unresolved WhatsApp @lid ghost records (fake 14-digit numbers)
+        conn.execute("DELETE FROM whatsapp_messages WHERE jid LIKE '%@lid'")
+        conn.execute("DELETE FROM whatsapp_contacts WHERE jid LIKE '%@lid'")
         try:
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_appt_active_slot "

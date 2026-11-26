@@ -49,16 +49,101 @@ let meInfo = null;
 let isStarting = false;
 let reconnectTimer = null;
 
-// In-memory store for synced WhatsApp contacts, chats, and messages
+// In-memory store for synced WhatsApp contacts, chats, messages, and LID -> PN resolution
 const contactsMap = new Map(); // jid -> { jid, phone, name, notify }
 const messagesMap = new Map(); // jid -> Array<{ id, jid, phone, fromMe, body, timestamp, pushName, type }>
+const lidToPnMap = new Map();  // lidJid (@lid) -> phoneJid (@s.whatsapp.net)
+const LID_MAP_FILE = path.join(AUTH_DIR, "lid_map.json");
+
+function loadLidMap() {
+  try {
+    if (fs.existsSync(LID_MAP_FILE)) {
+      const obj = JSON.parse(fs.readFileSync(LID_MAP_FILE, "utf8"));
+      for (const [k, v] of Object.entries(obj || {})) {
+        if (k && v) lidToPnMap.set(k, v);
+      }
+    }
+  } catch {}
+}
+
+let lidSaveTimer = null;
+function scheduleSaveLidMap() {
+  if (lidSaveTimer) return;
+  lidSaveTimer = setTimeout(() => {
+    lidSaveTimer = null;
+    try {
+      fs.mkdirSync(AUTH_DIR, { recursive: true });
+      fs.writeFileSync(LID_MAP_FILE, JSON.stringify(Object.fromEntries(lidToPnMap)), "utf8");
+    } catch {}
+  }, 1500);
+}
+
+function registerLidMapping(lidRaw, pnRaw) {
+  if (!lidRaw || !pnRaw) return;
+  const lid = jidNormalizedUser(String(lidRaw));
+  const pn = String(pnRaw).includes("@") ? jidNormalizedUser(String(pnRaw)) : phoneToJid(pnRaw);
+  if (lid.endsWith("@lid") && pn.endsWith("@s.whatsapp.net")) {
+    if (lidToPnMap.get(lid) !== pn) {
+      lidToPnMap.set(lid, pn);
+      scheduleSaveLidMap();
+      // Migrate any previously stored @lid messages/contact under the real phone JID
+      if (messagesMap.has(lid)) {
+        const oldMsgs = messagesMap.get(lid) || [];
+        const targetArr = messagesMap.get(pn) || [];
+        const realPhone = jidToPhone(pn);
+        for (const m of oldMsgs) {
+          m.jid = pn;
+          m.phone = realPhone;
+          if (!targetArr.some((x) => x.id === m.id)) targetArr.push(m);
+        }
+        targetArr.sort((a, b) => a.timestamp - b.timestamp);
+        messagesMap.set(pn, targetArr.slice(-200));
+        messagesMap.delete(lid);
+      }
+      if (contactsMap.has(lid)) {
+        const oldC = contactsMap.get(lid);
+        const curC = contactsMap.get(pn) || { jid: pn, phone: jidToPhone(pn), name: "", notify: "" };
+        contactsMap.set(pn, {
+          jid: pn,
+          phone: jidToPhone(pn),
+          name: curC.name || oldC.name || "",
+          notify: curC.notify || oldC.notify || "",
+        });
+        contactsMap.delete(lid);
+      }
+    }
+  }
+}
+
+function resolveJid(rawJid, altJid = "") {
+  if (!rawJid || typeof rawJid !== "string") return "";
+  const norm = jidNormalizedUser(rawJid);
+  if (altJid && typeof altJid === "string") {
+    const normAlt = jidNormalizedUser(altJid);
+    if (norm.endsWith("@lid") && normAlt.endsWith("@s.whatsapp.net")) {
+      registerLidMapping(norm, normAlt);
+      return normAlt;
+    }
+    if (normAlt.endsWith("@lid") && norm.endsWith("@s.whatsapp.net")) {
+      registerLidMapping(normAlt, norm);
+      return norm;
+    }
+  }
+  if (norm.endsWith("@lid") && lidToPnMap.has(norm)) {
+    return lidToPnMap.get(norm);
+  }
+  return norm;
+}
 
 function jidToPhone(jid) {
   if (!jid || typeof jid !== "string") return "";
-  if (jid.endsWith("@g.us") || jid === "status@broadcast") return "";
-  const user = jid.split("@")[0].split(":")[0];
+  if (jid.endsWith("@g.us") || jid === "status@broadcast" || jid.endsWith("@newsletter")) return "";
+  const resolved = resolveJid(jid);
+  // Never turn an unresolved WhatsApp @lid privacy ID into a fake phone number!
+  if (resolved.endsWith("@lid")) return "";
+  const user = resolved.split("@")[0].split(":")[0];
   const digits = user.replace(/\D+/g, "");
-  return digits.length >= 6 ? `+${digits}` : "";
+  return digits.length >= 6 && digits.length <= 15 ? `+${digits}` : "";
 }
 
 function phoneToJid(phone) {
@@ -90,7 +175,8 @@ function normalizeMessage(msg) {
   if (!rawJid || rawJid === "status@broadcast" || rawJid.endsWith("@g.us") || rawJid.endsWith("@newsletter")) {
     return null;
   }
-  const jid = jidNormalizedUser(rawJid);
+  const altJid = msg?.key?.remoteJidAlt || msg?.key?.senderPn || "";
+  const jid = resolveJid(rawJid, altJid);
   const phone = jidToPhone(jid);
   if (!phone) return null;
   const body = extractMessageText(msg);
@@ -110,7 +196,14 @@ function normalizeMessage(msg) {
 function storeContact(c) {
   if (!c?.id) return null;
   if (c.id.endsWith("@g.us") || c.id === "status@broadcast" || c.id.endsWith("@newsletter")) return null;
-  const jid = jidNormalizedUser(c.id);
+  // Capture WhatsApp LID <-> Phone Number mappings from Baileys contact objects
+  if (c.lid && c.id.endsWith("@s.whatsapp.net")) {
+    registerLidMapping(c.lid, c.id);
+  }
+  if (c.id.endsWith("@lid") && (c.phoneNumber || c.pn)) {
+    registerLidMapping(c.id, c.phoneNumber || c.pn);
+  }
+  const jid = resolveJid(c.id, c.phoneNumber || c.pn || "");
   const phone = jidToPhone(jid);
   if (!phone) return null;
   const prev = contactsMap.get(jid) || { jid, phone, name: "", notify: "" };
@@ -432,6 +525,7 @@ app.post("/sync", async (req, res) => {
 });
 
 app.listen(PORT, "127.0.0.1", () => {
+  loadLidMap();
   console.log(`ContactsHub WA Bridge listening on http://127.0.0.1:${PORT}`);
   // Auto-reconnect if session credentials already exist
   if (fs.existsSync(path.join(AUTH_DIR, "creds.json"))) {
