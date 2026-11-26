@@ -985,20 +985,79 @@ function showPreviewModal(data) {
 
 async function checkDriveStatus() {
   const pill = $("driveStatusPill");
+  const titleEl = $("driveOauthStatusTitle");
+  const subEl = $("driveOauthStatusSub");
+  const connBtn = $("driveConnectOauthBtn");
+  const discBtn = $("driveDisconnectOauthBtn");
   try {
     const s = await api("/api/gdrive/status");
     if (s.connected) {
-      pill.classList.add("ok");
-      pill.innerHTML = '<span class="dot"></span><span>Google Drive connecté</span>';
+      pill?.classList.remove("err");
+      pill?.classList.add("ok");
+      if (pill) pill.innerHTML = `<span class="dot"></span><span>Drive connecté${s.email ? ` (${esc(s.email)})` : ""}</span>`;
+      if (titleEl) titleEl.textContent = s.mode === "oauth" ? `🟢 Google Drive connecté (${s.email || "OAuth2"})` : "🟢 Google Drive connecté (CLI local)";
+      if (subEl) subEl.textContent = "Vous pouvez parcourir vos dossiers, importer vos Google Sheets/Excel/CSV et sauvegarder votre base sur Drive.";
+      connBtn?.classList.add("hidden");
+      if (s.mode === "oauth") discBtn?.classList.remove("hidden");
+      else discBtn?.classList.add("hidden");
     } else {
-      pill.classList.add("err");
-      pill.innerHTML = '<span class="dot"></span><span>Drive non connecté</span>';
+      pill?.classList.remove("ok");
+      pill?.classList.add("err");
+      if (pill) pill.innerHTML = '<span class="dot"></span><span>Drive non connecté</span>';
+      discBtn?.classList.add("hidden");
+      if (s.oauth_configured) {
+        if (titleEl) titleEl.textContent = "🔗 Connectez votre compte Google Drive";
+        if (subEl) subEl.textContent = "Cliquez sur le bouton pour autoriser l'accès à vos Google Sheets et fichiers Drive.";
+        connBtn?.classList.remove("hidden");
+      } else {
+        if (titleEl) titleEl.textContent = "⚙️ Connexion OAuth2 Google Drive non configurée";
+        if (subEl) {
+          subEl.innerHTML = `Ajoutez <code>GOOGLE_CLIENT_ID</code> et <code>GOOGLE_CLIENT_SECRET</code> dans Railway (URI de redirection : <code>${esc(s.redirect_uri || "")}</code>), ou utilisez l'<strong>import par lien</strong> juste dessous.`;
+        }
+        connBtn?.classList.add("hidden");
+      }
     }
   } catch {
-    pill.classList.add("err");
-    pill.innerHTML = '<span class="dot"></span><span>Drive indisponible</span>';
+    pill?.classList.add("err");
+    if (pill) pill.innerHTML = '<span class="dot"></span><span>Drive indisponible</span>';
   }
 }
+
+$("driveDisconnectOauthBtn")?.addEventListener("click", async () => {
+  try {
+    await api("/api/gdrive/oauth/disconnect", { method: "POST" });
+    toast("Compte Google Drive déconnecté.", "info");
+    checkDriveStatus();
+    state.driveLoaded = false;
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+$("driveLinkImportBtn")?.addEventListener("click", async () => {
+  const url = ($("driveLinkInput")?.value || "").trim();
+  const tag = ($("driveLinkTagInput")?.value || "").trim();
+  if (!url) return toast("Collez d'abord un lien Google Sheets ou Google Drive.", "error");
+  const btn = $("driveLinkImportBtn");
+  btn.disabled = true;
+  btn.textContent = "Importation…";
+  try {
+    const res = await api("/api/gdrive/import-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, tag }),
+    });
+    const s = res.summary || {};
+    toast(`Import réussi (${res.filename}) : ${s.added || 0} nouveau(x), ${s.updated || 0} mis à jour !`, "success");
+    $("driveLinkInput").value = "";
+    refreshAll();
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "⚡ Importer ce lien";
+  }
+});
 
 function renderDriveBreadcrumbs() {
   $("driveBreadcrumbs").innerHTML = state.driveStack

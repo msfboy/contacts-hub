@@ -816,10 +816,84 @@ def api_export():
 # ---------------- GOOGLE DRIVE & BACKUP ----------------
 
 
+def _gdrive_redirect_uri() -> str:
+    ws = db.get_workspace(_current_workspace_id())
+    base = (ws.get("public_base_url") or request.host_url).rstrip("/")
+    return f"{base}/api/gdrive/oauth/callback"
+
+
 @app.route("/api/gdrive/status", methods=["GET"])
 def api_gdrive_status():
     account = request.args.get("account") or None
-    return jsonify(gdrive_client.check_status(account=account))
+    st = gdrive_client.check_status(account=account)
+    st["redirect_uri"] = _gdrive_redirect_uri()
+    return jsonify(st)
+
+
+@app.route("/api/gdrive/oauth/start", methods=["GET"])
+def api_gdrive_oauth_start():
+    if not gdrive_client.is_oauth_configured():
+        return Response(
+            "Configurez GOOGLE_CLIENT_ID et GOOGLE_CLIENT_SECRET dans les variables Railway pour activer la connexion Google Drive.",
+            status=400,
+            mimetype="text/plain; charset=utf-8",
+        )
+    state_tok = secrets.token_urlsafe(24)
+    session["gdrive_oauth_state"] = state_tok
+    url = gdrive_client.build_oauth_url(_gdrive_redirect_uri(), state_tok)
+    return redirect(url)
+
+
+@app.route("/api/gdrive/oauth/callback", methods=["GET"])
+def api_gdrive_oauth_callback():
+    err = request.args.get("error")
+    if err:
+        return redirect("/?gdrive_error=" + err)
+    expected_state = session.pop("gdrive_oauth_state", "") or ""
+    provided_state = request.args.get("state") or ""
+    if not expected_state or not provided_state or not hmac.compare_digest(provided_state, expected_state):
+        return Response("État OAuth invalide ou expiré. Réessayez.", status=400)
+    code = (request.args.get("code") or "").strip()
+    if not code:
+        return Response("Code OAuth manquant.", status=400)
+    ok, info = gdrive_client.exchange_oauth_code(code, _gdrive_redirect_uri())
+    if not ok:
+        return Response(f"Échec connexion Google Drive : {info}", status=400)
+    _log_audit("gdrive_oauth", f"Google Drive connecté ({info})")
+    return redirect("/?gdrive=connected")
+
+
+@app.route("/api/gdrive/oauth/disconnect", methods=["POST"])
+def api_gdrive_oauth_disconnect():
+    gdrive_client.disconnect_oauth()
+    _log_audit("gdrive_oauth", "Google Drive déconnecté")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/gdrive/import-link", methods=["POST"])
+def api_gdrive_import_link():
+    data = request.get_json(silent=True) or {}
+    url = (data.get("url") or "").strip()
+    extra_tag = (data.get("tag") or "Google Drive").strip()
+    if not url:
+        return jsonify({"error": "Collez un lien Google Sheets ou Google Drive."}), 400
+    dest_dir = os.path.join(IMPORTS_DIR, "gdrive_links")
+    ok, local_path, fname, err = gdrive_client.download_from_link(url, dest_dir)
+    if not ok:
+        return jsonify({"error": err}), 400
+    try:
+        records = parsers.parse_file(local_path)
+        summary = db.upsert_contacts(
+            records=records,
+            source_type="gdrive",
+            source_name=fname,
+            source_ref=url[:180],
+            extra_tag=extra_tag,
+        )
+        enrichment.run_auto_enrichment()
+        return jsonify({"ok": True, "filename": fname, "summary": summary})
+    except Exception as exc:
+        return jsonify({"error": f"Erreur lors de l'analyse du fichier : {exc}"}), 400
 
 
 @app.route("/api/gdrive/files", methods=["GET"])

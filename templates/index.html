@@ -1218,13 +1218,35 @@ Virement</textarea></label>
         <header class="page-header">
           <div>
             <h1>Importer depuis Google Drive</h1>
-            <p class="subtitle">Multi-comptes, aperçu avant import, recherche et import en un clic (Sheets, Excel, CSV, PDF, vCard…).</p>
+            <p class="subtitle">Connectez votre compte Google Drive (OAuth2) ou importez directement par lien Google Sheets / Drive en 1 clic.</p>
           </div>
           <div class="header-actions">
-            <input type="text" id="driveAccountInput" class="input input-sm" placeholder="Compte Drive optionnel (ex: autre@gmail.com)" style="width:270px;" />
+            <input type="text" id="driveAccountInput" class="input input-sm" placeholder="Compte Drive optionnel" style="width:200px;" />
             <button class="btn btn-secondary" id="driveRefreshBtn">↻ Actualiser</button>
           </div>
         </header>
+
+        <!-- OAuth2 Connection Banner -->
+        <div class="card" id="driveOauthBar" style="padding:14px 18px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;background:#f8fafc;">
+          <div>
+            <div style="font-weight:700;font-size:14px;" id="driveOauthStatusTitle">🔗 Connexion Google Drive (SaaS OAuth2)</div>
+            <div style="font-size:12.5px;color:var(--muted);margin-top:2px;" id="driveOauthStatusSub">Vérification de l'état de connexion…</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <a class="btn btn-primary hidden" id="driveConnectOauthBtn" href="/api/gdrive/oauth/start">🔗 Connecter mon compte Google Drive</a>
+            <button class="btn btn-secondary hidden" id="driveDisconnectOauthBtn">Déconnecter</button>
+          </div>
+        </div>
+
+        <!-- 1-Click Google Sheets / Drive Link Import -->
+        <div class="card" style="padding:14px 18px;margin-bottom:14px;background:#eff6ff;border:1px solid #bfdbfe;">
+          <div style="font-weight:700;font-size:13.5px;color:#1e40af;margin-bottom:8px;">⚡ Import rapide par lien Google Sheets / Drive (sans configuration requise)</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <input type="url" id="driveLinkInput" class="input" style="flex:2;min-width:260px;background:#fff;" placeholder="Collez un lien Google Sheets ou Drive (ex: https://docs.google.com/spreadsheets/d/…)" />
+            <input type="text" id="driveLinkTagInput" class="input input-sm" style="width:180px;background:#fff;" placeholder="Tag (ex: Leads Sheet)" />
+            <button class="btn btn-primary" id="driveLinkImportBtn">⚡ Importer ce lien</button>
+          </div>
+        </div>
 
         <div class="card toolbar">
           <input type="text" id="driveSearchInput" class="input search-input" placeholder="Rechercher un fichier sur Google Drive (ex: contacts, clients, prospects)…" />
