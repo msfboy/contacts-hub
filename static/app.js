@@ -3955,10 +3955,55 @@ function fmtFcfa(val) {
   return `${Math.round(Number(val || 0)).toLocaleString("fr-FR")} FCFA`;
 }
 
+let payRegistrationsCache = [];
+
+async function loadPaymentRegistrations() {
+  const sel = $("payRegistrationSelect");
+  if (!sel) return;
+  try {
+    const data = await api("/api/payments/registrations");
+    payRegistrationsCache = data.items || [];
+    sel.innerHTML =
+      '<option value="">— Choisir un(e) nouvel(le) inscrit(e) pour pré-remplir —</option>' +
+      payRegistrationsCache
+        .map((r, idx) => {
+          const dateShort = (r.submitted_at || "").slice(0, 10);
+          const lbl = `${r.full_name || r.email} · ${r.dossier_num || ""} · ${r.course_name || ""} (${dateShort})`;
+          return `<option value="${idx}">${esc(lbl)}</option>`;
+        })
+        .join("");
+  } catch {}
+}
+
+$("payRegistrationSelect")?.addEventListener("change", (e) => {
+  const idx = e.target.value;
+  if (idx === "") return;
+  const r = payRegistrationsCache[Number(idx)];
+  if (!r) return;
+  if ($("payStudentName")) $("payStudentName").value = r.full_name || "";
+  if ($("payStudentPhone")) $("payStudentPhone").value = r.phone || "";
+  if ($("payStudentEmail")) $("payStudentEmail").value = r.email || "";
+  if ($("payCourseName") && r.course_name) $("payCourseName").value = r.course_name;
+  if ($("payTotalFee") && r.suggested_fee > 0) $("payTotalFee").value = String(r.suggested_fee);
+  if ($("payRef")) $("payRef").value = r.payment_ref || "";
+  if ($("payMethod") && r.payment_method) {
+    const pmLow = r.payment_method.toLowerCase();
+    if (pmLow.includes("tmoney") || pmLow.includes("yas")) $("payMethod").value = "TMoney";
+    else if (pmLow.includes("flooz") || pmLow.includes("moov")) $("payMethod").value = "Flooz";
+    else if (pmLow.includes("esp")) $("payMethod").value = "Espèces";
+    else if (pmLow.includes("virement")) $("payMethod").value = "Virement";
+  }
+  const noteParts = [r.dossier_num ? `Dossier ${r.dossier_num}` : "", r.session_choice || "", r.level_choice ? `Niveau ${r.level_choice}` : ""].filter(Boolean);
+  if ($("payNotes")) $("payNotes").value = noteParts.join(" · ");
+  toast(`Champs pré-remplis pour ${r.full_name || r.email} ! Saisissez le montant versé.`, "info");
+  $("payAmountPaid")?.focus();
+});
+
 async function loadPayments() {
   if ($("payDate") && !$("payDate").value) {
     $("payDate").value = new Date().toISOString().slice(0, 10);
   }
+  loadPaymentRegistrations();
   try {
     const q = ($("paySearchInput")?.value || "").trim();
     const wsId = state.workspaceId || 1;
@@ -4042,7 +4087,18 @@ $("savePaymentBtn")?.addEventListener("click", async () => {
       }),
     });
     toast(`Paiement enregistré ! Reçu ${res.receipt_num} généré.`, "success");
+    if (res.id) {
+      const receiptUrl = `/receipt/${res.id}`;
+      const dlBtn = $("lastReceiptDownloadBtn");
+      if (dlBtn) {
+        dlBtn.href = receiptUrl;
+        dlBtn.textContent = `⬇️ Télécharger le reçu ${res.receipt_num} (PDF signé)`;
+        dlBtn.classList.remove("hidden");
+      }
+      window.open(receiptUrl, "_blank", "noopener,noreferrer");
+    }
     ["payStudentName", "payStudentPhone", "payStudentEmail", "payAmountPaid", "payRef", "payNotes"].forEach((id) => ($(id).value = ""));
+    if ($("payRegistrationSelect")) $("payRegistrationSelect").value = "";
     loadPayments();
     refreshAll();
   } catch (e) {

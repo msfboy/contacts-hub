@@ -2472,6 +2472,43 @@ def api_payments_list():
     return jsonify(payments_hub.list_payments(search=q, workspace_id=ws_id))
 
 
+@app.route("/api/payments/registrations", methods=["GET"])
+def api_payments_registrations():
+    import re as _re
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT fs.id, fs.form_id, fs.contact_id, fs.dossier_num, fs.full_name, fs.email, fs.phone,
+                   fs.session_choice, fs.level_choice, fs.payment_plan, fs.payment_method,
+                   fs.payment_ref, fs.submitted_at,
+                   lf.title AS form_title, lf.config_json AS form_config_json
+            FROM form_submissions fs
+            LEFT JOIN lead_forms lf ON lf.id = fs.form_id
+            ORDER BY fs.id DESC
+            LIMIT 200
+            """
+        ).fetchall()
+    items = []
+    for r in rows:
+        d = dict(r)
+        total_fee_num = 0
+        try:
+            fcfg = json.loads(d.pop("form_config_json", None) or "{}")
+        except Exception:
+            fcfg = {}
+        fee_str = str(fcfg.get("total_fee") or fcfg.get("tuition_fee") or d.get("payment_plan") or "")
+        digits = _re.sub(r"[^\d]", "", fee_str)
+        if digits:
+            try:
+                total_fee_num = int(digits)
+            except ValueError:
+                total_fee_num = 0
+        d["suggested_fee"] = total_fee_num
+        d["course_name"] = d.get("form_title") or "Formation Intensive"
+        items.append(d)
+    return jsonify({"items": items})
+
+
 @app.route("/api/payments", methods=["POST"])
 def api_payments_create():
     data = request.get_json(force=True) or {}
@@ -2993,6 +3030,50 @@ def api_delete_form(fid: int):
     return jsonify({"ok": True})
 
 
+@app.route("/f/dossier/<dossier_num>", methods=["GET"])
+def public_view_dossier(dossier_num: str):
+    with db.get_conn() as conn:
+        sub = conn.execute(
+            "SELECT * FROM form_submissions WHERE dossier_num = ? ORDER BY id DESC LIMIT 1",
+            (dossier_num.strip(),),
+        ).fetchone()
+        if not sub:
+            return "Fiche d'inscription introuvable.", 404
+        sub = dict(sub)
+        form = conn.execute("SELECT * FROM lead_forms WHERE id = ?", (sub["form_id"],)).fetchone()
+    if not form:
+        return "Formulaire introuvable.", 404
+    form = dict(form)
+    try:
+        cfg = json.loads(form.get("config_json") or "{}")
+    except Exception:
+        cfg = {}
+    try:
+        extra_data = json.loads(sub.get("data_json") or "{}")
+    except Exception:
+        extra_data = {}
+    ws = db.get_workspace(int(form.get("workspace_id") or 1))
+    wa_num = "".join(ch for ch in (cfg.get("whatsapp_number") or "") if ch.isdigit())
+    wa_url = ""
+    if wa_num:
+        import urllib.parse as _up
+        wa_msg = f"Bonjour, je confirme mon inscription ({sub['dossier_num']}) pour {form['title']}. Nom : {sub['full_name']}."
+        wa_url = f"https://wa.me/{wa_num}?text={_up.quote(wa_msg)}"
+    return render_template(
+        "training_form.html",
+        form=form,
+        cfg=cfg,
+        workspace=ws,
+        dossier_num=sub["dossier_num"],
+        today=(sub.get("submitted_at") or "")[:10],
+        submitted=True,
+        name=sub["full_name"],
+        submitted_data=extra_data,
+        wa_confirm_url=wa_url,
+        dossier_url=request.url,
+    )
+
+
 @app.route("/f/<slug>", methods=["GET", "POST"])
 def public_capture_form(slug: str):
     with db.get_conn() as conn:
@@ -3004,6 +3085,7 @@ def public_capture_form(slug: str):
         cfg = json.loads(form.get("config_json") or "{}")
     except Exception:
         cfg = {}
+    ws = db.get_workspace(int(form.get("workspace_id") or 1))
 
     is_training = (form.get("form_kind") == "training")
     today = datetime.now().strftime("%d/%m/%Y")
@@ -3015,7 +3097,7 @@ def public_capture_form(slug: str):
         phone = (request.form.get("phone") or "").strip()
         if not email_addr or "@" not in email_addr:
             tpl = "training_form.html" if is_training else "capture_form.html"
-            return render_template(tpl, form=form, cfg=cfg, dossier_num=dossier_num, today=today, submitted=False, error="Adresse email invalide.")
+            return render_template(tpl, form=form, cfg=cfg, workspace=ws, dossier_num=dossier_num, today=today, submitted=False, error="Adresse email invalide.")
 
         if is_training:
             civilite = (request.form.get("civilite") or "").strip()
@@ -3081,31 +3163,37 @@ def public_capture_form(slug: str):
                     ),
                 )
 
+            base_pub = (ws.get("public_base_url") or request.host_url).rstrip("/")
+            dossier_url = f"{base_pub}/f/dossier/{dossier_used}"
+
             if phone:
                 wa_broadcast.trigger_auto_welcome_wa(
                     contact_id=cid,
                     phone=phone,
                     full_name=full_name,
                     source_label=form["title"],
-                    extra_vars={"dossier": dossier_used, "formation": form["title"]},
+                    extra_vars={"dossier": dossier_used, "formation": form["title"], "fiche_url": dossier_url},
                 )
 
             wa_num = "".join(ch for ch in (cfg.get("whatsapp_number") or "") if ch.isdigit())
             wa_url = ""
             if wa_num:
                 import urllib.parse as _up
-                wa_msg = f"Bonjour, je viens de valider mon inscription ({dossier_used}) pour {form['title']}. Nom : {full_name}, Session : {session_choice}, Niveau : {level_choice}, Formule : {payment_plan}."
+                wa_msg = f"Bonjour, je viens de valider mon inscription ({dossier_used}) pour {form['title']}. Nom : {full_name}, Session : {session_choice}, Niveau : {level_choice}, Formule : {payment_plan}. Ma fiche : {dossier_url}"
                 wa_url = f"https://wa.me/{wa_num}?text={_up.quote(wa_msg)}"
 
             return render_template(
                 "training_form.html",
                 form=form,
                 cfg=cfg,
+                workspace=ws,
                 dossier_num=dossier_used,
                 today=today,
                 submitted=True,
                 name=full_name,
+                submitted_data=extra_data,
                 wa_confirm_url=wa_url,
+                dossier_url=dossier_url,
             )
 
         # Simple capture form
@@ -3157,7 +3245,7 @@ def public_capture_form(slug: str):
         return render_template("capture_form.html", form=form, submitted=True, name=full_name or email_addr)
 
     if is_training:
-        return render_template("training_form.html", form=form, cfg=cfg, dossier_num=dossier_num, today=today, submitted=False, error=None)
+        return render_template("training_form.html", form=form, cfg=cfg, workspace=ws, dossier_num=dossier_num, today=today, submitted=False, error=None)
     return render_template("capture_form.html", form=form, submitted=False, error=None)
 
 

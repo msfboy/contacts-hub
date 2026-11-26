@@ -79,25 +79,50 @@
       color: #166534;
     }
     .tot-row.rem { color: #b45309; font-weight: 600; }
+    .header-brand { display: flex; align-items: center; gap: 14px; }
+    .header-logo {
+      width: 54px; height: 54px; border-radius: 10px; background: #fff; padding: 4px;
+      object-fit: contain; box-shadow: 0 3px 10px rgba(0,0,0,0.18); flex-shrink: 0;
+    }
     .footer {
-      margin-top: 32px;
+      margin-top: 28px;
       padding-top: 18px;
       border-top: 1px dashed #cbd5e1;
       display: flex;
       justify-content: space-between;
       align-items: flex-end;
+      gap: 20px;
+      flex-wrap: wrap;
       font-size: 12.5px;
       color: #64748b;
     }
-    .stamp {
-      border: 2px solid #16a34a;
-      color: #16a34a;
-      padding: 6px 14px;
-      border-radius: 8px;
-      font-weight: 800;
-      font-size: 13px;
-      letter-spacing: 1px;
-      transform: rotate(-4deg);
+    .sign-block {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .sig-area {
+      text-align: center;
+      min-width: 170px;
+    }
+    .sig-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #475569;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+    .sig-line {
+      border-top: 1px solid #94a3b8;
+      margin-top: 2px;
+      padding-top: 3px;
+      font-size: 11px;
+      color: #64748b;
+    }
+    .seal-wrap {
+      transform: rotate(-8deg);
+      flex-shrink: 0;
     }
     @media print {
       body { background: #fff; padding: 0; }
@@ -109,13 +134,18 @@
 <body>
   <div class="toolbar">
     <button class="btn btn-ghost" onclick="window.close()">Fermer</button>
-    <button class="btn btn-primary" onclick="window.print()">🖨 Imprimer / Enregistrer en PDF</button>
+    <button class="btn btn-primary" onclick="window.print()">⬇️ Télécharger / Imprimer le reçu (PDF)</button>
   </div>
   <div class="receipt">
     <div class="header">
-      <div>
-        <h1>{{ workspace.name }}</h1>
-        <p>{{ workspace.tagline or 'Reçu officiel de paiement' }}</p>
+      <div class="header-brand">
+        {% if workspace.logo_url %}
+          <img src="{{ workspace.logo_url }}" alt="{{ workspace.name }}" class="header-logo" />
+        {% endif %}
+        <div>
+          <h1>{{ workspace.name }}</h1>
+          <p>{{ workspace.tagline or 'Reçu officiel de paiement' }}</p>
+        </div>
       </div>
       <div class="rec-badge">
         <div class="lbl">Reçu officiel</div>
@@ -179,12 +209,34 @@
         {% endif %}
       </div>
 
+      {% set status_txt = 'SOLDÉ' if remaining_balance <= 0 and effective_fee > 0 else 'PAYÉ' %}
       <div class="footer">
         <div>
-          Émis le {{ payment.paid_at }} via {{ workspace.name }}.<br/>
-          Ce reçu fait foi de règlement auprès de l'administration.
+          Émis le <strong>{{ payment.paid_at }}</strong> via <strong>{{ workspace.name }}</strong>.<br/>
+          Ce reçu signé et cacheté fait foi de règlement auprès de l'administration.
         </div>
-        <div class="stamp">{{ 'SOLDÉ' if remaining_balance <= 0 and effective_fee > 0 else 'PAYÉ' }}</div>
+        <div class="sign-block">
+          <div class="seal-wrap" aria-label="Cachet officiel">
+            <svg width="108" height="108" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="60" cy="60" r="54" fill="none" stroke="#15803d" stroke-width="3.2" opacity="0.88"/>
+              <circle cx="60" cy="60" r="46" fill="none" stroke="#15803d" stroke-width="1.3" stroke-dasharray="3 2" opacity="0.82"/>
+              <text x="60" y="34" text-anchor="middle" font-size="8.2" font-weight="800" fill="#15803d" letter-spacing="0.6">{{ (workspace.name or 'DIRECTION')[:18] | upper }}</text>
+              <line x1="20" y1="45" x2="100" y2="45" stroke="#15803d" stroke-width="1.2" opacity="0.7"/>
+              <text x="60" y="65" text-anchor="middle" font-size="16" font-weight="900" fill="#15803d" letter-spacing="1.6">{{ status_txt }}</text>
+              <line x1="20" y1="74" x2="100" y2="74" stroke="#15803d" stroke-width="1.2" opacity="0.7"/>
+              <text x="60" y="88" text-anchor="middle" font-size="9" font-weight="700" fill="#15803d">{{ payment.paid_at }}</text>
+              <text x="60" y="100" text-anchor="middle" font-size="7.5" font-weight="700" fill="#15803d">VALIDÉ · DIRECTION</text>
+            </svg>
+          </div>
+          <div class="sig-area">
+            <div class="sig-title">Signature &amp; Cachet</div>
+            <svg width="160" height="52" viewBox="0 0 180 56" xmlns="http://www.w3.org/2000/svg">
+              <path d="M12,42 C24,14 38,10 44,34 C48,46 56,14 68,26 C76,34 84,18 96,24 C106,30 116,12 128,28 C136,38 148,20 166,22" fill="none" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M26,46 C62,40 118,38 164,42" fill="none" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round" opacity="0.65"/>
+            </svg>
+            <div class="sig-line">La Direction / Comptabilité</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>

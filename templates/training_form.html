@@ -123,8 +123,34 @@
       border-radius: 10px; padding: 12px; margin-bottom: 14px; font-size: 13.5px;
     }
 
+    .org-head-wrap { display: flex; align-items: center; gap: 14px; }
+    .org-logo {
+      width: 62px; height: 62px; border-radius: 12px; background: #fff; padding: 4px;
+      object-fit: contain; box-shadow: 0 4px 14px rgba(0,0,0,0.2); flex-shrink: 0;
+    }
+    .recap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; }
+    .recap-item {
+      background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 9px 12px;
+    }
+    .recap-lbl { font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 700; letter-spacing: 0.3px; }
+    .recap-val { font-size: 13.5px; font-weight: 600; color: var(--ink); margin-top: 2px; word-break: break-word; }
+    .pay-reminder {
+      background: #fffbeb; border: 1.5px solid #fcd34d; border-radius: 10px; padding: 14px 16px;
+      color: #78350f; font-size: 13px; line-height: 1.55;
+    }
+    .pay-reminder h3 { font-size: 14px; color: #92400e; margin-bottom: 6px; }
+    .recap-sig-box {
+      border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px 14px; background: #fff;
+      display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+    }
+    .recap-sig-img { max-height: 75px; max-width: 240px; border-bottom: 1px dashed #94a3b8; padding-bottom: 4px; }
+    .recap-valid-stamp {
+      border: 2px solid #059669; color: #059669; border-radius: 8px; padding: 6px 14px;
+      font-weight: 800; font-size: 12px; letter-spacing: 0.8px; text-transform: uppercase; transform: rotate(-4deg);
+    }
+
     @media (max-width: 700px) {
-      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+      .grid-2, .grid-3, .recap-grid { grid-template-columns: 1fr; }
       .sheet-body, .sheet-header { padding: 18px; }
     }
     @media print {
@@ -145,13 +171,19 @@
     </div>
   </div>
 
+  {% set org_logo = cfg.logo_url or (workspace.logo_url if workspace else '') %}
   <div class="sheet">
     <div class="sheet-header">
-      <div>
-        {% if cfg.badge %}<div class="org-badge">{{ cfg.badge }}</div>{% endif %}
-        <h1>{{ cfg.org_name }}</h1>
-        <div class="sub"><strong>{{ form.title }}</strong><br />{{ form.subtitle }}</div>
-        {% if cfg.location %}<div style="font-size:12px;opacity:0.85;margin-top:6px;">📍 {{ cfg.location }}</div>{% endif %}
+      <div class="org-head-wrap">
+        {% if org_logo %}
+          <img src="{{ org_logo }}" alt="{{ cfg.org_name }}" class="org-logo" />
+        {% endif %}
+        <div>
+          {% if cfg.badge %}<div class="org-badge">{{ cfg.badge }}</div>{% endif %}
+          <h1>{{ cfg.org_name }}</h1>
+          <div class="sub"><strong>{{ form.title }}</strong><br />{{ form.subtitle }}</div>
+          {% if cfg.location %}<div style="font-size:12px;opacity:0.85;margin-top:6px;">📍 {{ cfg.location }}</div>{% endif %}
+        </div>
       </div>
       <div class="meta-box">
         <div>N° Dossier : <strong id="dossierDisplay">{{ dossier_num }}</strong></div>
@@ -163,19 +195,80 @@
 
     <div class="sheet-body">
       {% if submitted %}
-        <div class="success-banner">
+        {% set sd = submitted_data or {} %}
+        <div class="success-banner no-print">
           <h2 style="margin-bottom:8px;">✅ Inscription enregistrée avec succès !</h2>
-          <p style="font-size:14.5px;margin-bottom:10px;">
+          <p style="font-size:14.5px;margin-bottom:8px;">
             Merci <strong>{{ name }}</strong> — Votre numéro de dossier est <strong>{{ dossier_num }}</strong>.
           </p>
-          <p style="font-size:13px;color:#047857;margin-bottom:16px;">
-            Votre fiche a été transmise directement à l'équipe de <strong>{{ cfg.org_name }}</strong>.
+          <p style="font-size:13px;color:#047857;margin-bottom:14px;">
+            Votre fiche complète est prête ci-dessous. Téléchargez-la en PDF A4 pour vos archives et conservez votre numéro de dossier.
           </p>
-          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;" class="no-print">
-            <button type="button" class="tbtn tbtn-primary" onclick="window.print()">🖨️ Télécharger / Imprimer A4</button>
+          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+            <button type="button" class="tbtn tbtn-primary" onclick="window.print()">⬇️ Télécharger / Imprimer ma Fiche Complète (PDF A4)</button>
             {% if wa_confirm_url %}
-              <a class="tbtn tbtn-wa" href="{{ wa_confirm_url }}" target="_blank" style="text-decoration:none;">💬 Confirmer sur WhatsApp</a>
+              <a class="tbtn tbtn-wa" href="{{ wa_confirm_url }}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;">💬 Confirmer sur WhatsApp</a>
             {% endif %}
+          </div>
+        </div>
+
+        <!-- FICHE COMPLETE RECAPITULATIVE A4 -->
+        <div class="section">
+          <h2 class="section-title">1. Identité du Candidat</h2>
+          <div class="recap-grid">
+            <div class="recap-item"><div class="recap-lbl">Nom complet</div><div class="recap-val">{{ name }}</div></div>
+            <div class="recap-item"><div class="recap-lbl">N° de Dossier</div><div class="recap-val">{{ dossier_num }}</div></div>
+            <div class="recap-item"><div class="recap-lbl">Téléphone / WhatsApp</div><div class="recap-val">{{ sd.get('phone') or '—' }}</div></div>
+            <div class="recap-item"><div class="recap-lbl">Adresse E-mail</div><div class="recap-val">{{ sd.get('email') or '—' }}</div></div>
+            {% if sd.get('dob') %}<div class="recap-item"><div class="recap-lbl">Date & lieu de naissance</div><div class="recap-val">{{ sd.get('dob') }}{% if sd.get('lieu_naissance') %} à {{ sd.get('lieu_naissance') }}{% endif %}</div></div>{% endif %}
+            {% if sd.get('nationalite') %}<div class="recap-item"><div class="recap-lbl">Nationalité</div><div class="recap-val">{{ sd.get('nationalite') }}</div></div>{% endif %}
+            {% if sd.get('adresse') %}<div class="recap-item"><div class="recap-lbl">Quartier / Adresse</div><div class="recap-val">{{ sd.get('adresse') }}</div></div>{% endif %}
+            {% if sd.get('profession') %}<div class="recap-item"><div class="recap-lbl">Statut / Profession</div><div class="recap-val">{{ sd.get('profession') }}</div></div>{% endif %}
+            {% if sd.get('urgence') %}<div class="recap-item full"><div class="recap-lbl">Contact d'urgence</div><div class="recap-val">{{ sd.get('urgence') }}</div></div>{% endif %}
+          </div>
+        </div>
+
+        <div class="section">
+          <h2 class="section-title">2. Formation, Horaires & Profil</h2>
+          <div class="recap-grid">
+            <div class="recap-item"><div class="recap-lbl">Formation</div><div class="recap-val">{{ form.title }}</div></div>
+            <div class="recap-item"><div class="recap-lbl">Session choisie</div><div class="recap-val">{{ sd.get('session_choice') or '—' }}</div></div>
+            <div class="recap-item"><div class="recap-lbl">Niveau estimé</div><div class="recap-val">{{ sd.get('level_choice') or '—' }}</div></div>
+            <div class="recap-item"><div class="recap-lbl">Objectif principal</div><div class="recap-val">{{ sd.get('objectif') or '—' }}</div></div>
+          </div>
+        </div>
+
+        <div class="section">
+          <h2 class="section-title">3. Rappel des Modalités de Paiement</h2>
+          <div class="recap-grid" style="margin-bottom:12px;">
+            <div class="recap-item"><div class="recap-lbl">Formule choisie</div><div class="recap-val">{{ sd.get('payment_plan') or (cfg.total_fee or cfg.tuition_fee or '—') }}</div></div>
+            <div class="recap-item"><div class="recap-lbl">Mode de règlement</div><div class="recap-val">{{ sd.get('payment_method') or '—' }}{% if sd.get('payment_ref') %} · Réf : {{ sd.get('payment_ref') }}{% endif %}</div></div>
+          </div>
+          <div class="pay-reminder">
+            <h3>💳 Modalités de règlement — {{ cfg.org_name }}</h3>
+            <div>
+              {% if cfg.tuition_fee %}• <strong>Frais de formation :</strong> {{ cfg.tuition_fee }}<br />{% endif %}
+              {% if cfg.registration_fee %}• <strong>Frais d'inscription :</strong> {{ cfg.registration_fee }}<br />{% endif %}
+              {% if cfg.total_fee %}• <strong>Total intégral :</strong> {{ cfg.total_fee }} (possibilité de règlement en tranches selon accord avec l'administration)<br />{% endif %}
+              • <strong>Moyens acceptés :</strong> {{ (cfg.payment_methods or ['TMoney', 'Flooz', 'Espèces']) | join(', ') }}<br />
+              {% if cfg.whatsapp_number %}• <strong>Confirmation de paiement :</strong> Envoyez la capture/référence de votre règlement par WhatsApp au <strong>{{ cfg.whatsapp_number }}</strong> en indiquant votre N° de dossier <strong>{{ dossier_num }}</strong> pour recevoir votre reçu officiel signé.{% endif %}
+            </div>
+          </div>
+        </div>
+
+        <div class="section" style="margin-bottom:0;">
+          <h2 class="section-title">4. Engagement & Validation</h2>
+          <div class="recap-sig-box">
+            <div>
+              <div style="font-size:12px;color:#475569;margin-bottom:6px;">
+                Fait le <strong>{{ today }}</strong> · Engagement approuvé électroniquement par <strong>{{ name }}</strong>.
+              </div>
+              {% if sd.get('signature_data') and sd.get('signature_data').startswith('data:image/png;base64,') %}
+                <div style="font-size:11px;color:#64748b;margin-bottom:4px;">Signature du candidat :</div>
+                <img src="{{ sd.get('signature_data') }}" alt="Signature du candidat" class="recap-sig-img" />
+              {% endif %}
+            </div>
+            <div class="recap-valid-stamp">✓ Dossier Enregistré<br /><span style="font-size:10px;font-weight:600;">{{ dossier_num }}</span></div>
           </div>
         </div>
       {% else %}
