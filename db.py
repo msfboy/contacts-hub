@@ -253,6 +253,8 @@ def init_db() -> None:
             ("deal_value", "REAL DEFAULT 0"),
             ("workspace_id", "INTEGER DEFAULT 1"),
             ("assigned_to", "TEXT DEFAULT ''"),
+            ("referral_code", "TEXT DEFAULT ''"),
+            ("referred_by", "TEXT DEFAULT ''"),
         ]
         for col, ddl in migrations:
             if col not in existing_cols:
@@ -908,6 +910,16 @@ def init_db() -> None:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_quotes_ws ON quotes(workspace_id)")
+        q_cols = {r["name"] for r in conn.execute("PRAGMA table_info(quotes)").fetchall()}
+        for col, ddl in (
+            ("signed_by", "TEXT DEFAULT ''"),
+            ("signed_at", "TEXT DEFAULT ''"),
+            ("signature_data", "TEXT DEFAULT ''"),
+            ("signature_hash", "TEXT DEFAULT ''"),
+            ("signed_ip", "TEXT DEFAULT ''"),
+        ):
+            if col not in q_cols:
+                conn.execute(f"ALTER TABLE quotes ADD COLUMN {col} {ddl}")
 
         # Clean up legacy unresolved WhatsApp @lid ghost records (fake 14-15 digit numbers)
         conn.execute("DELETE FROM whatsapp_messages WHERE jid LIKE '%@lid' OR LENGTH(REPLACE(phone, '+', '')) >= 14")

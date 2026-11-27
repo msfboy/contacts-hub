@@ -5,7 +5,9 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import db
+import executive_brief
 import payments_hub
+import wa_client
 
 
 def _portal_secret() -> bytes:
@@ -337,6 +339,7 @@ def get_portal_data(contact_id: int) -> Optional[Dict[str, Any]]:
             "currency": ws.get("currency") or "FCFA",
         },
         "online_pay_url": online_pay_url,
+        "referral": get_referral_stats(contact_id, workspace_id=ws_id),
     }
 
 
@@ -446,3 +449,358 @@ def get_notifications(workspace_id: int = 1) -> Dict[str, Any]:
         "count": len(items),
         "items": items[:20],
     }
+
+
+# ---------------------------------------------------------------------------
+# PACK 4: WAR ROOM TV, REVENUE FORECASTER, AT-RISK WIN-BACK & VIRAL REFERRALS
+# ---------------------------------------------------------------------------
+
+def get_war_room_live(workspace_id: int = 1) -> Dict[str, Any]:
+    brief = executive_brief.generate_executive_brief(workspace_id)
+    lb = executive_brief.compute_sales_leaderboard(workspace_id)
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+
+    with db.get_conn() as conn:
+        today_rev = float(
+            conn.execute(
+                "SELECT COALESCE(SUM(amount_paid), 0) FROM student_payments WHERE COALESCE(workspace_id, 1) = ? AND paid_at = ?",
+                (workspace_id, today),
+            ).fetchone()[0]
+            or 0.0
+        )
+        today_leads = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM contacts WHERE COALESCE(workspace_id, 1) = ? AND created_at LIKE ?",
+                (workspace_id, f"{today}%"),
+            ).fetchone()[0]
+            or 0
+        )
+        recent_pays = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT id, receipt_num, student_name, course_name, amount_paid, payment_method, paid_at, created_at
+                FROM student_payments
+                WHERE COALESCE(workspace_id, 1) = ?
+                ORDER BY id DESC
+                LIMIT 8
+                """,
+                (workspace_id,),
+            ).fetchall()
+        ]
+        recent_quotes = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT id, quote_num, client_name, client_company, total_amount, status, signed_by, signed_at
+                FROM quotes
+                WHERE COALESCE(workspace_id, 1) = ? AND status IN ('accepted', 'paid')
+                ORDER BY id DESC
+                LIMIT 5
+                """,
+                (workspace_id,),
+            ).fetchall()
+        ]
+
+    top_reps = [r for r in (lb.get("leaderboard") or []) if r["username"] != "Non assigné"][:3]
+    if not top_reps:
+        top_reps = (lb.get("leaderboard") or [])[:3]
+
+    return {
+        "server_time": now.strftime("%H:%M:%S"),
+        "server_date": now.strftime("%d/%m/%Y"),
+        "workspace": brief["workspace"],
+        "currency": brief["currency"],
+        "kpis": brief["kpis"],
+        "today_revenue": today_rev,
+        "today_leads": today_leads,
+        "top_reps": top_reps,
+        "recent_payments": recent_pays,
+        "recent_signed_quotes": recent_quotes,
+    }
+
+
+def compute_revenue_forecast(workspace_id: int = 1) -> Dict[str, Any]:
+    """Baseline 30/60/90-day cashflow forecast + What-If simulator parameters."""
+    ws = db.get_workspace(workspace_id)
+    currency = ws.get("currency") or "FCFA"
+    now = datetime.now()
+    since_30 = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+
+    with db.get_conn() as conn:
+        rev_30d = float(
+            conn.execute(
+                "SELECT COALESCE(SUM(amount_paid), 0) FROM student_payments WHERE COALESCE(workspace_id, 1) = ? AND paid_at >= ?",
+                (workspace_id, since_30),
+            ).fetchone()[0]
+            or 0.0
+        )
+        avg_pay_row = conn.execute(
+            "SELECT AVG(amount_paid) FROM student_payments WHERE COALESCE(workspace_id, 1) = ? AND amount_paid > 0",
+            (workspace_id,),
+        ).fetchone()
+        avg_ticket = float(avg_pay_row[0] or 35000.0)
+
+        leads_30d = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM contacts WHERE COALESCE(workspace_id, 1) = ? AND created_at >= ?",
+                (workspace_id, since_30),
+            ).fetchone()[0]
+            or 0
+        )
+        total_contacts = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM contacts WHERE COALESCE(workspace_id, 1) = ?",
+                (workspace_id,),
+            ).fetchone()[0]
+            or 0
+        )
+        clients_count = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM contacts WHERE COALESCE(workspace_id, 1) = ? AND status = 'client'",
+                (workspace_id,),
+            ).fetchone()[0]
+            or 0
+        )
+        open_pipeline = float(
+            conn.execute(
+                "SELECT COALESCE(SUM(deal_value), 0) FROM contacts WHERE COALESCE(workspace_id, 1) = ? AND status NOT IN ('client', 'unsubscribed')",
+                (workspace_id,),
+            ).fetchone()[0]
+            or 0.0
+        )
+        open_quotes = float(
+            conn.execute(
+                "SELECT COALESCE(SUM(total_amount), 0) FROM quotes WHERE COALESCE(workspace_id, 1) = ? AND status IN ('sent', 'accepted')",
+                (workspace_id,),
+            ).fetchone()[0]
+            or 0.0
+        )
+
+    unpaid = payments_hub.list_unpaid_balances(workspace_id)
+    unpaid_total = sum(float(u.get("remaining_balance") or 0) for u in unpaid)
+
+    conv_rate = round((clients_count / total_contacts) * 100.0, 1) if total_contacts > 0 else 18.0
+    conv_rate = max(5.0, min(85.0, conv_rate))
+    monthly_leads = max(10, leads_30d)
+    # Weighted 30-day baseline = recent velocity + 45% unpaid recovery + 35% open quotes + 20% open pipeline
+    base_30 = round(max(rev_30d, monthly_leads * (conv_rate / 100.0) * avg_ticket) + unpaid_total * 0.45 + open_quotes * 0.35 + open_pipeline * 0.15)
+    base_60 = round(base_30 * 2.05)
+    base_90 = round(base_30 * 3.15)
+
+    return {
+        "currency": currency,
+        "rev_30d_actual": round(rev_30d),
+        "unpaid_recoverable": round(unpaid_total),
+        "open_quotes_value": round(open_quotes),
+        "open_pipeline_value": round(open_pipeline),
+        "avg_ticket": round(avg_ticket),
+        "conversion_rate": conv_rate,
+        "monthly_leads": monthly_leads,
+        "forecast_30d": base_30,
+        "forecast_60d": base_60,
+        "forecast_90d": base_90,
+    }
+
+
+def detect_at_risk_revenue(workspace_id: int = 1) -> Dict[str, Any]:
+    """Radar 'CA en Danger' : detects stale quotes, untouched hot leads & dormant clients."""
+    ws = db.get_workspace(workspace_id)
+    currency = ws.get("currency") or "FCFA"
+    now = datetime.now()
+    cut_quote = (now - timedelta(days=5)).isoformat(timespec="seconds")
+    cut_hot = (now - timedelta(days=7)).isoformat(timespec="seconds")
+    cut_client = (now - timedelta(days=45)).isoformat(timespec="seconds")
+    risks: List[Dict[str, Any]] = []
+
+    with db.get_conn() as conn:
+        # 1. Unsigned quotes > 5 days
+        qs = conn.execute(
+            """
+            SELECT id, quote_num, client_name, client_phone, title, total_amount, created_at
+            FROM quotes
+            WHERE COALESCE(workspace_id, 1) = ? AND status = 'sent' AND created_at <= ?
+            ORDER BY total_amount DESC LIMIT 8
+            """,
+            (workspace_id, cut_quote),
+        ).fetchall()
+        for q in qs:
+            risks.append({
+                "kind": "stale_quote",
+                "item_id": q["id"],
+                "icon": "📄",
+                "label": f"Devis sans réponse : {q['quote_num']} — {q['client_name']}",
+                "detail": q["title"],
+                "phone": q["client_phone"] or "",
+                "amount": float(q["total_amount"] or 0),
+                "since": (q["created_at"] or "")[:10],
+            })
+
+        # 2. Hot leads untouched > 7 days
+        hots = conn.execute(
+            """
+            SELECT id, full_name, email, phone, company, deal_value, lead_score, updated_at
+            FROM contacts
+            WHERE COALESCE(workspace_id, 1) = ? AND status IN ('new', 'followup')
+              AND lead_score >= 70 AND updated_at <= ?
+            ORDER BY deal_value DESC, lead_score DESC LIMIT 8
+            """,
+            (workspace_id, cut_hot),
+        ).fetchall()
+        for h in hots:
+            est = float(h["deal_value"] or 35000)
+            risks.append({
+                "kind": "stale_hot_lead",
+                "item_id": h["id"],
+                "icon": "🔥",
+                "label": f"Lead chaud refroidi (Score {h['lead_score']}) : {h['full_name'] or h['email']}",
+                "detail": h["company"] or "Relance commerciale prioritaire",
+                "phone": h["phone"] or "",
+                "amount": est,
+                "since": (h["updated_at"] or "")[:10],
+            })
+
+        # 3. Dormant clients > 45 days
+        dormant = conn.execute(
+            """
+            SELECT id, full_name, email, phone, company, deal_value, updated_at
+            FROM contacts
+            WHERE COALESCE(workspace_id, 1) = ? AND status = 'client' AND updated_at <= ?
+            ORDER BY deal_value DESC LIMIT 6
+            """,
+            (workspace_id, cut_client),
+        ).fetchall()
+        for d in dormant:
+            est = float(d["deal_value"] or 30000)
+            risks.append({
+                "kind": "dormant_client",
+                "item_id": d["id"],
+                "icon": "💤",
+                "label": f"Client dormant (>45j) : {d['full_name'] or d['email']}",
+                "detail": "Offre fidélité / niveau supérieur à proposer",
+                "phone": d["phone"] or "",
+                "amount": est,
+                "since": (d["updated_at"] or "")[:10],
+            })
+
+    total_at_risk = round(sum(r["amount"] for r in risks))
+    return {
+        "currency": currency,
+        "count": len(risks),
+        "total_at_risk": total_at_risk,
+        "items": risks,
+    }
+
+
+def send_winback_whatsapp(kind: str, item_id: int, workspace_id: int = 1) -> Dict[str, Any]:
+    ws = db.get_workspace(workspace_id)
+    phone = ""
+    msg = ""
+    with db.get_conn() as conn:
+        if kind == "stale_quote":
+            q = conn.execute("SELECT * FROM quotes WHERE id = ?", (item_id,)).fetchone()
+            if not q:
+                return {"ok": False, "error": "Devis introuvable."}
+            phone = q["client_phone"] or ""
+            first = (q["client_name"] or "").split(" ")[0] or "Bonjour"
+            msg = (
+                f"Bonjour {first} 👋\n"
+                f"Je reviens vers vous de la part de *{ws['name']}* suite à notre offre *{q['title']}* (Réf {q['quote_num']}).\n"
+                f"Avez-vous des questions pour valider et démarrer ? Nous restons disponibles ici !"
+            )
+        else:
+            c = conn.execute("SELECT * FROM contacts WHERE id = ?", (item_id,)).fetchone()
+            if not c:
+                return {"ok": False, "error": "Contact introuvable."}
+            phone = c["phone"] or ""
+            first = (c["first_name"] or c["full_name"] or "").split(" ")[0] or "Bonjour"
+            if kind == "dormant_client":
+                msg = (
+                    f"Bonjour {first} 👋\n"
+                    f"Toute l'équipe de *{ws['name']}* espère que vous allez bien ! "
+                    f"En tant qu'ancien(ne) client(e) VIP, vous bénéficiez d'un accès privilégié sur notre prochaine session. Souhaitez-vous recevoir le programme ?"
+                )
+            else:
+                msg = (
+                    f"Bonjour {first} 👋\n"
+                    f"Suite à votre intérêt pour *{ws['name']}*, nos prochaines places se remplissent vite. "
+                    f"Souhaitez-vous réserver un échange rapide ou un test de niveau gratuit cette semaine ?"
+                )
+    if not phone:
+        return {"ok": False, "error": "Aucun numéro WhatsApp renseigné pour ce contact."}
+    res = wa_client.bridge_post("/send", {"phone": phone, "text": msg}, timeout=15.0)
+    if not res.get("ok"):
+        return {"ok": False, "error": res.get("error") or "WhatsApp non connecté."}
+    return {"ok": True}
+
+
+def ensure_referral_code(contact_id: int) -> str:
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT id, referral_code FROM contacts WHERE id = ?", (contact_id,)).fetchone()
+        if not row:
+            return ""
+        code = (row["referral_code"] or "").strip()
+        if code:
+            return code
+        tag_hash = hashlib.sha256(f"ref:{contact_id}".encode("utf-8")).hexdigest()[:4].upper()
+        code = f"VIP{contact_id}{tag_hash}"
+        conn.execute("UPDATE contacts SET referral_code = ? WHERE id = ?", (code, contact_id))
+        return code
+
+
+def attribute_referral(new_contact_id: int, ref_code: str) -> bool:
+    code = (ref_code or "").strip().upper()
+    if not code or not new_contact_id:
+        return False
+    now = datetime.now().isoformat(timespec="seconds")
+    with db.get_conn() as conn:
+        parrain = conn.execute("SELECT id, full_name FROM contacts WHERE UPPER(referral_code) = ?", (code,)).fetchone()
+        if not parrain or int(parrain["id"]) == int(new_contact_id):
+            return False
+        conn.execute("UPDATE contacts SET referred_by = ? WHERE id = ? AND COALESCE(referred_by, '') = ''", (code, new_contact_id))
+        conn.execute(
+            "INSERT INTO contact_activities (contact_id, kind, content, created_at) VALUES (?, 'note', ?, ?)",
+            (int(parrain["id"]), f"🔥 Nouveau filleul parrainé via votre code {code} ! (+100 pts ambassadeur)", now),
+        )
+    return True
+
+
+def get_referral_stats(contact_id: int, workspace_id: int = 1) -> Dict[str, Any]:
+    code = ensure_referral_code(contact_id)
+    with db.get_conn() as conn:
+        cnt = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM contacts WHERE UPPER(referred_by) = ?",
+                (code.upper(),),
+            ).fetchone()[0]
+            or 0
+        )
+        form_row = conn.execute(
+            "SELECT slug FROM lead_forms WHERE form_kind = 'training' ORDER BY id ASC LIMIT 1"
+        ).fetchone()
+    share_path = f"/f/{form_row['slug']}?ref={code}" if form_row else f"/rdv?ref={code}"
+    return {
+        "code": code,
+        "referrals_count": cnt,
+        "points": cnt * 100,
+        "share_path": share_path,
+    }
+
+
+def get_referral_leaderboard(workspace_id: int = 1) -> List[Dict[str, Any]]:
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT p.id, p.full_name, p.email, p.referral_code, COUNT(f.id) AS referrals_count
+            FROM contacts p
+            JOIN contacts f ON UPPER(f.referred_by) = UPPER(p.referral_code)
+            WHERE COALESCE(p.workspace_id, 1) = ? AND COALESCE(p.referral_code, '') != ''
+            GROUP BY p.id
+            ORDER BY referrals_count DESC
+            LIMIT 10
+            """,
+            (workspace_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+

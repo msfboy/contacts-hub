@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WAR ROOM — {{ workspace.name }}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: radial-gradient(circle at top right, #172038 0%, #070a12 65%);
+      color: #f8fafc;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      padding: 24px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(212, 175, 55, 0.28);
+      padding-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .brand-badge {
+      background: linear-gradient(135deg, #d4af37, #9a7420);
+      color: #070a12;
+      font-weight: 900;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      letter-spacing: 1px;
+    }
+    .brand h1 { margin: 0; font-size: 24px; letter-spacing: 0.3px; }
+    .clock-wrap { text-align: right; }
+    .clock { font-size: 28px; font-weight: 800; color: #f5d77a; font-variant-numeric: tabular-nums; }
+    .live-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; color: #4ade80; font-weight: 700; letter-spacing: 0.6px;
+    }
+    .dot {
+      width: 9px; height: 9px; border-radius: 50%; background: #22c55e;
+      box-shadow: 0 0 10px #22c55e;
+      animation: pulse 1.6s infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr;
+      gap: 18px;
+    }
+    @media (max-width: 980px) { .hero-grid { grid-template-columns: 1fr; } }
+    .panel {
+      background: rgba(17, 24, 39, 0.88);
+      border: 1px solid rgba(212, 175, 55, 0.25);
+      border-radius: 18px;
+      padding: 22px 26px;
+      box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+    }
+    .panel-label {
+      font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+      color: #9ca3af; font-weight: 700;
+    }
+    .giant-num {
+      font-size: clamp(34px, 4.5vw, 56px);
+      font-weight: 900;
+      color: #f5d77a;
+      margin: 8px 0 10px;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -1px;
+    }
+    .sub-num { font-size: 32px; font-weight: 800; margin: 10px 0 4px; color: #fff; font-variant-numeric: tabular-nums; }
+    .bar-bg {
+      background: #1f2937; border-radius: 999px; height: 14px; overflow: hidden; margin-top: 8px;
+    }
+    .bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #d4af37, #22c55e);
+      width: 0%;
+      transition: width 0.8s ease;
+    }
+    .lower-grid {
+      display: grid;
+      grid-template-columns: 1.3fr 1fr;
+      gap: 18px;
+      flex: 1;
+    }
+    @media (max-width: 980px) { .lower-grid { grid-template-columns: 1fr; } }
+    .feed-item {
+      display: flex; justify-content: space-between; align-items: center; gap: 12px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      margin-bottom: 10px;
+    }
+    .feed-item.flash { border-color: #d4af37; background: rgba(212, 175, 55, 0.12); }
+    .feed-amt { font-size: 16px; font-weight: 800; color: #4ade80; white-space: nowrap; }
+    .rep-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 16px; border-radius: 12px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(212, 175, 55, 0.18);
+      margin-bottom: 10px;
+    }
+    .back-btn {
+      color: #d1d5db; text-decoration: none; font-size: 13px;
+      border: 1px solid #374151; padding: 6px 12px; border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-badge">👑 WAR ROOM</span>
+      <div>
+        <h1 id="wrBrand">{{ workspace.name }}</h1>
+        <div class="live-pill"><span class="dot"></span> LIVE TELEMETRY · ACTUALISATION 15s</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:18px;">
+      <a class="back-btn" href="/">← Retour CRM</a>
+      <div class="clock-wrap">
+        <div class="clock" id="wrClock">--:--:--</div>
+        <div style="font-size:12px;color:#9ca3af;" id="wrDate">--/--/----</div>
+      </div>
+    </div>
+  </header>
+
+  <section class="hero-grid">
+    <div class="panel">
+      <div class="panel-label">Chiffre d'Affaires Encaissé (Mois en cours)</div>
+      <div class="giant-num" id="wrMonthRev">0 FCFA</div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;color:#d1d5db;">
+        <span id="wrTargetLabel">Objectif : —</span>
+        <strong id="wrTargetPct" style="color:#4ade80;">0%</strong>
+      </div>
+      <div class="bar-bg"><div class="bar-fill" id="wrTargetBar"></div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-label">Encaissé Aujourd'hui</div>
+      <div class="sub-num" style="color:#4ade80;" id="wrTodayRev">0 FCFA</div>
+      <div style="font-size:13px;color:#9ca3af;margin-top:8px;">Nouveaux leads du jour : <strong style="color:#fff;" id="wrTodayLeads">0</strong></div>
+    </div>
+    <div class="panel">
+      <div class="panel-label">Base Active &amp; Conversion</div>
+      <div class="sub-num" id="wrClients">0 clients</div>
+      <div style="font-size:13px;color:#9ca3af;margin-top:8px;">Taux conversion : <strong style="color:#f5d77a;" id="wrConv">0%</strong> · Impayés : <strong style="color:#fbbf24;" id="wrUnpaid">0</strong></div>
+    </div>
+  </section>
+
+  <section class="lower-grid">
+    <div class="panel">
+      <div class="panel-label" style="margin-bottom:14px;">⚡ Flux d'Encaissements en Direct</div>
+      <div id="wrPaymentsFeed"><div style="color:#9ca3af;">Chargement…</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-label" style="margin-bottom:14px;">🏆 Top Commerciaux &amp; Devis Signés</div>
+      <div id="wrTopReps"></div>
+      <div class="panel-label" style="margin:18px 0 10px;">✍️ Derniers Devis Signés</div>
+      <div id="wrSignedQuotes"></div>
+    </div>
+  </section>
+
+  <script>
+    let lastPayId = 0;
+    const fmt = (n, cur) => `${Math.round(Number(n || 0)).toLocaleString("fr-FR")} ${cur || "FCFA"}`;
+    const esc = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+
+    async function refreshWarRoom() {
+      try {
+        const res = await fetch("/api/war-room/live");
+        const d = await res.json();
+        const cur = d.currency || "FCFA";
+        const k = d.kpis || {};
+        document.getElementById("wrClock").textContent = d.server_time || "";
+        document.getElementById("wrDate").textContent = d.server_date || "";
+        document.getElementById("wrMonthRev").textContent = fmt(k.month_revenue, cur);
+        document.getElementById("wrTargetLabel").textContent = `Objectif mensuel : ${fmt(k.monthly_target, cur)}`;
+        document.getElementById("wrTargetPct").textContent = `${k.target_pct || 0}%`;
+        document.getElementById("wrTargetBar").style.width = `${Math.min(100, k.target_pct || 0)}%`;
+        document.getElementById("wrTodayRev").textContent = fmt(d.today_revenue, cur);
+        document.getElementById("wrTodayLeads").textContent = String(d.today_leads || 0);
+        document.getElementById("wrClients").textContent = `${k.clients_count || 0} clients`;
+        document.getElementById("wrConv").textContent = `${k.conversion_rate || 0}%`;
+        document.getElementById("wrUnpaid").textContent = fmt(k.unpaid_total, cur);
+
+        const pays = d.recent_payments || [];
+        const newestId = pays.length ? pays[0].id : 0;
+        const isNew = lastPayId > 0 && newestId > lastPayId;
+        lastPayId = newestId;
+        document.getElementById("wrPaymentsFeed").innerHTML = pays.length
+          ? pays.map((p, i) => `
+              <div class="feed-item ${isNew && i === 0 ? "flash" : ""}">
+                <div>
+                  <div style="font-weight:700;font-size:15px;">${esc(p.student_name)}</div>
+                  <div style="font-size:12.5px;color:#9ca3af;">${esc(p.course_name)} · ${esc(p.payment_method)} · ${esc(p.paid_at)}</div>
+                </div>
+                <div class="feed-amt">+ ${fmt(p.amount_paid, cur)}</div>
+              </div>
+            `).join("")
+          : '<div style="color:#9ca3af;">Aucun encaissement récent.</div>';
+
+        const medals = ["🥇", "🥈", "🥉"];
+        const reps = d.top_reps || [];
+        document.getElementById("wrTopReps").innerHTML = reps.length
+          ? reps.map((r, i) => `
+              <div class="rep-row">
+                <div><strong>${medals[i] || "#" + (i+1)} ${esc(r.display_name)}</strong><div style="font-size:12px;color:#9ca3af;">${r.clients_closed} client(s) · ${r.conversion_rate}% conv.</div></div>
+                <div style="font-weight:800;color:#f5d77a;">${fmt(r.revenue_collected, cur)}</div>
+              </div>
+            `).join("")
+          : '<div style="color:#9ca3af;">Aucun commercial classé.</div>';
+
+        const qs = d.recent_signed_quotes || [];
+        document.getElementById("wrSignedQuotes").innerHTML = qs.length
+          ? qs.map((q) => `
+              <div class="feed-item">
+                <div><strong>${esc(q.quote_num)}</strong> · ${esc(q.client_name)}</div>
+                <div style="color:#f5d77a;font-weight:700;">${fmt(q.total_amount, cur)}</div>
+              </div>
+            `).join("")
+          : '<div style="color:#9ca3af;font-size:13px;">Aucun devis signé récemment.</div>';
+      } catch (_) {}
+    }
+
+    refreshWarRoom();
+    setInterval(refreshWarRoom, 15000);
+  </script>
+</body>
+</html>

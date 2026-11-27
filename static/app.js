@@ -118,7 +118,7 @@ function switchTab(tab) {
   if (tab === "training-forms") loadTrainingForms();
   if (tab === "payments") { loadPayments(); loadQuotes(); loadPaymentGateway(); }
   if (tab === "booking") loadBookingHub();
-  if (tab === "dashboard") { loadDashboard(); loadExecutiveBrief(); loadSalesLeaderboard(); loadGeoMap(); }
+  if (tab === "dashboard") { loadDashboard(); loadExecutiveBrief(); loadSalesLeaderboard(); loadGeoMap(); loadForecastAndAtRisk(); }
   if (tab === "quality") loadDuplicates();
   if (tab === "gdrive" && !state.driveLoaded) loadDriveFiles();
   if (tab === "local" && !state.localLoaded) initLocalBrowser();
@@ -5578,4 +5578,167 @@ $("closeNotifDrawerBtn")?.addEventListener("click", () => $("notifDrawer")?.clas
   });
   loadNotifications();
   setInterval(loadNotifications, 45000);
+})();
+
+// =========================================================================
+// PACK 4: WHAT-IF FORECASTER, AT-RISK WIN-BACK & UNIVERSAL CTRL+K PALETTE
+// =========================================================================
+
+let _forecastBase = null;
+
+function recalcWhatIfForecast() {
+  if (!$("fc30Val")) return;
+  const leads = Number($("fcLeadsSlider")?.value || 20);
+  const conv = Number($("fcConvSlider")?.value || 20);
+  const ticket = Number($("fcTicketSlider")?.value || 35000);
+  const cur = _forecastBase?.currency || "FCFA";
+  const extraPipe = ((_forecastBase?.unpaid_recoverable || 0) * 0.45) + ((_forecastBase?.open_quotes_value || 0) * 0.35);
+
+  if ($("fcLeadsLbl")) $("fcLeadsLbl").textContent = String(leads);
+  if ($("fcConvLbl")) $("fcConvLbl").textContent = `${conv}%`;
+  if ($("fcTicketLbl")) $("fcTicketLbl").textContent = `${Math.round(ticket).toLocaleString("fr-FR")} ${cur}`;
+
+  const monthlyNew = leads * (conv / 100) * ticket;
+  const m30 = Math.round(monthlyNew + extraPipe);
+  const m60 = Math.round(monthlyNew * 2 + extraPipe * 1.15);
+  const m90 = Math.round(monthlyNew * 3 + extraPipe * 1.25);
+
+  $("fc30Val").textContent = `${m30.toLocaleString("fr-FR")} ${cur}`;
+  $("fc60Val").textContent = `${m60.toLocaleString("fr-FR")} ${cur}`;
+  $("fc90Val").textContent = `${m90.toLocaleString("fr-FR")} ${cur}`;
+}
+
+async function loadForecastAndAtRisk() {
+  try {
+    const fc = await api("/api/executive/forecast");
+    _forecastBase = fc;
+    if ($("fcLeadsSlider")) $("fcLeadsSlider").value = Math.min(500, Math.max(5, fc.monthly_leads || 20));
+    if ($("fcConvSlider")) $("fcConvSlider").value = Math.min(80, Math.max(5, Math.round(fc.conversion_rate || 20)));
+    if ($("fcTicketSlider")) $("fcTicketSlider").value = Math.min(500000, Math.max(5000, Math.round((fc.avg_ticket || 35000) / 5000) * 5000));
+    recalcWhatIfForecast();
+  } catch (_) {}
+
+  const listEl = $("atRiskList");
+  if (!listEl) return;
+  try {
+    const ar = await api("/api/executive/at-risk");
+    const cur = esc(ar.currency || "FCFA");
+    if ($("atRiskTotalBadge")) {
+      $("atRiskTotalBadge").textContent = `${Math.round(ar.total_at_risk || 0).toLocaleString("fr-FR")} ${cur} à récupérer`;
+    }
+    const items = ar.items || [];
+    if (!items.length) {
+      listEl.innerHTML = '<div class="empty-cell">Aucune opportunité en danger 🎉</div>';
+      return;
+    }
+    listEl.innerHTML = items
+      .map(
+        (r) => `
+        <div class="dash-action-row">
+          <div style="min-width:0;flex:1;">
+            <div style="font-weight:600;font-size:12.5px;">${r.icon || "⚠️"} ${esc(r.label)}</div>
+            <div class="subtitle" style="font-size:11.5px;">${esc(r.detail)} · <strong>${Math.round(r.amount || 0).toLocaleString("fr-FR")} ${cur}</strong></div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm winback-btn" data-kind="${esc(r.kind)}" data-id="${r.item_id}" ${r.phone ? "" : "disabled"} title="${r.phone ? "Envoyer relance WhatsApp" : "Aucun téléphone"}">⚡ Relancer</button>
+        </div>
+      `
+      )
+      .join("");
+    listEl.querySelectorAll(".winback-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api("/api/executive/winback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: btn.dataset.kind, item_id: Number(btn.dataset.id) }),
+          });
+          toast("⚡ Relance WhatsApp de récupération envoyée !", "success");
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      });
+    });
+  } catch (_) {}
+}
+
+["fcLeadsSlider", "fcConvSlider", "fcTicketSlider"].forEach((id) => {
+  $(id)?.addEventListener("input", recalcWhatIfForecast);
+});
+$("resetForecastBtn")?.addEventListener("click", loadForecastAndAtRisk);
+
+// Universal Command Palette (Ctrl+K / Cmd+K)
+(function initCommandPalette() {
+  const modal = $("cmdPaletteModal");
+  const input = $("cmdPaletteInput");
+  const results = $("cmdPaletteResults");
+  if (!modal || !input || !results) return;
+
+  const ACTIONS = [
+    { icon: "📺", label: "Ouvrir la War Room TV (Écran Géant Direction)", run: () => window.open("/war-room", "_blank", "noopener") },
+    { icon: "👑", label: "Télécharger le Rapport Direction PDF (A4)", run: () => window.open("/executive-report", "_blank", "noopener") },
+    { icon: "🖤", label: "Basculer Mode Boardroom (Obsidian & Gold)", run: () => $("boardroomToggleBtn")?.click() },
+    { icon: "➕", label: "Créer un nouveau contact CRM", run: () => { switchTab("contacts"); $("openAddModalBtn")?.click(); } },
+    { icon: "📄", label: "Créer un Devis / Facture Proforma B2B", run: () => switchTab("payments") },
+    { icon: "⚡", label: "Ouvrir les Automatisations No-Code (Si → Alors)", run: () => { switchTab("crm"); document.querySelector('[data-subtab="crm-workflows"]')?.click(); } },
+    { icon: "💬", label: "Ouvrir WhatsApp Interne & Pilote IA", run: () => switchTab("conversion") },
+    { icon: "📊", label: "Ouvrir le Tableau de bord Exécutif", run: () => switchTab("dashboard") },
+    { icon: "📅", label: "Ouvrir la page publique de Prise de RDV", run: () => window.open("/rdv", "_blank", "noopener") },
+  ];
+
+  const close = () => modal.classList.add("hidden");
+  const open = () => {
+    modal.classList.remove("hidden");
+    input.value = "";
+    render("");
+    setTimeout(() => input.focus(), 30);
+  };
+
+  let searchTimer = null;
+  async function render(q) {
+    const ql = q.trim().toLowerCase();
+    const matchedActions = ACTIONS.filter((a) => !ql || a.label.toLowerCase().includes(ql));
+    let contactRows = [];
+    if (ql.length >= 2) {
+      try {
+        const res = await api(`/api/contacts?q=${encodeURIComponent(ql)}&per_page=6`);
+        contactRows = res.contacts || [];
+      } catch (_) {}
+    }
+    const html = [
+      ...matchedActions.map(
+        (a, i) => `<div class="notif-item cmd-act" data-idx="${i}"><div class="notif-icon">${a.icon}</div><div class="notif-title">${esc(a.label)}</div></div>`
+      ),
+      ...contactRows.map(
+        (c) => `<div class="notif-item cmd-contact" data-id="${c.id}"><div class="notif-icon">👤</div><div><div class="notif-title">${esc(c.full_name || c.email)}</div><div class="notif-sub">${esc(c.email)} ${c.phone ? "· " + esc(c.phone) : ""}</div></div></div>`
+      ),
+    ].join("");
+    results.innerHTML = html || '<div class="empty-cell">Aucun résultat.</div>';
+    results.querySelectorAll(".cmd-act").forEach((el) => {
+      el.addEventListener("click", () => {
+        close();
+        matchedActions[Number(el.dataset.idx)]?.run();
+      });
+    });
+    results.querySelectorAll(".cmd-contact").forEach((el) => {
+      el.addEventListener("click", () => {
+        close();
+        if (typeof openProfile === "function") openProfile(el.dataset.id);
+      });
+    });
+  }
+
+  input.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => render(input.value), 120);
+  });
+  $("openCmdPaletteBtn")?.addEventListener("click", open);
+  $("closeCmdPaletteBtn")?.addEventListener("click", close);
+  modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      if (modal.classList.contains("hidden")) open();
+      else close();
+    }
+  });
 })();

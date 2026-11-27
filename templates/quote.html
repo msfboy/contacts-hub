@@ -129,7 +129,7 @@
     .seal-wrap { transform: rotate(-7deg); flex-shrink: 0; }
     @media print {
       body { background: #fff; padding: 0; }
-      .toolbar, .pay-cta { display: none; }
+      .toolbar, .pay-cta, .no-print { display: none; }
       .doc { box-shadow: none; border: 0; max-width: 100%; }
     }
   </style>
@@ -239,8 +239,35 @@
       </div>
       {% endif %}
 
-      {% set seal_txt = 'PAYÉ' if quote.status == 'paid' else ('PROFORMA' if quote.doc_type == 'proforma' else 'DEVIS') %}
-      {% set seal_col = '#15803d' if quote.status == 'paid' else '#1d4ed8' %}
+      {% if quote.signed_at %}
+      <div style="margin-top:20px;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
+        <div>
+          <strong style="color:#166534;">✍️ Devis accepté et signé électroniquement</strong>
+          <div style="font-size:12.5px;color:#334155;margin-top:3px;">
+            Signataire : <strong>{{ quote.signed_by }}</strong> · Date : {{ quote.signed_at[:16].replace('T', ' ') }}<br/>
+            Certificat SHA-256 : <code>{{ quote.signature_hash }}</code>
+          </div>
+        </div>
+        {% if quote.signature_data %}
+          <img src="{{ quote.signature_data }}" alt="Signature client" style="max-height:64px;background:#fff;border:1px solid #bbf7d0;border-radius:6px;padding:4px;" />
+        {% endif %}
+      </div>
+      {% elif quote.status != 'paid' %}
+      <div id="eSignBox" style="margin-top:20px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;padding:16px;" class="no-print">
+        <strong style="font-size:14px;color:#0f172a;">✍️ Accepter &amp; Signer ce devis électroniquement</strong>
+        <div style="font-size:12.5px;color:#475569;margin:4px 0 10px;">Tracez votre signature ci-dessous (au doigt ou à la souris) pour valider immédiatement cette offre avec certificat horodaté.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+          <input type="text" id="signerNameInput" value="{{ quote.client_name }}" placeholder="Votre nom et prénom *" style="flex:1;min-width:200px;padding:9px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:13.5px;" />
+          <button type="button" class="btn btn-ghost" id="clearSigBtn">Effacer</button>
+          <button type="button" class="btn btn-pay" id="submitSigBtn">✅ Valider &amp; Signer le devis</button>
+        </div>
+        <canvas id="sigCanvas" width="640" height="140" style="width:100%;max-width:640px;height:140px;background:#fff;border:1px dashed #94a3b8;border-radius:8px;touch-action:none;cursor:crosshair;"></canvas>
+        <div id="sigStatusMsg" style="font-size:12.5px;margin-top:6px;color:#15803d;"></div>
+      </div>
+      {% endif %}
+
+      {% set seal_txt = 'PAYÉ' if quote.status == 'paid' else ('SIGNÉ' if quote.signed_at else ('PROFORMA' if quote.doc_type == 'proforma' else 'DEVIS')) %}
+      {% set seal_col = '#15803d' if (quote.status == 'paid' or quote.signed_at) else '#1d4ed8' %}
       <div class="footer">
         <div>
           <strong>Bon pour accord (Client) :</strong><br/>
@@ -271,5 +298,62 @@
       </div>
     </div>
   </div>
+  <script>
+    (function () {
+      const canvas = document.getElementById("sigCanvas");
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      ctx.lineWidth = 2.4;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = "#0f172a";
+      let drawing = false;
+      let hasInk = false;
+
+      const pos = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const pt = e.touches ? e.touches[0] : e;
+        return {
+          x: (pt.clientX - rect.left) * (canvas.width / rect.width),
+          y: (pt.clientY - rect.top) * (canvas.height / rect.height),
+        };
+      };
+      const start = (e) => { drawing = true; hasInk = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); e.preventDefault(); };
+      const move = (e) => { if (!drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); e.preventDefault(); };
+      const end = () => { drawing = false; };
+
+      canvas.addEventListener("mousedown", start);
+      canvas.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", end);
+      canvas.addEventListener("touchstart", start, { passive: false });
+      canvas.addEventListener("touchmove", move, { passive: false });
+      window.addEventListener("touchend", end);
+
+      document.getElementById("clearSigBtn")?.addEventListener("click", () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        hasInk = false;
+      });
+      document.getElementById("submitSigBtn")?.addEventListener("click", async () => {
+        const name = (document.getElementById("signerNameInput")?.value || "").trim();
+        const msg = document.getElementById("sigStatusMsg");
+        if (!name) { msg.style.color = "#b91c1c"; msg.textContent = "Veuillez indiquer votre nom complet."; return; }
+        if (!hasInk) { msg.style.color = "#b91c1c"; msg.textContent = "Veuillez tracer votre signature dans le cadre."; return; }
+        msg.style.color = "#334155";
+        msg.textContent = "Enregistrement et certification SHA-256…";
+        try {
+          const res = await fetch("/api/quotes/{{ quote.id }}/sign", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ signed_by: name, signature_data: canvas.toDataURL("image/png") }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || "Erreur signature");
+          window.location.reload();
+        } catch (err) {
+          msg.style.color = "#b91c1c";
+          msg.textContent = err.message;
+        }
+      });
+    })();
+  </script>
 </body>
 </html>

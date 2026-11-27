@@ -64,6 +64,21 @@ def _set_setting(key: str, value: str) -> None:
         )
 
 
+def _active_ws_id() -> int:
+    try:
+        return int(session.get("workspace_id") or request.args.get("ws") or 1)
+    except Exception:
+        return 1
+
+
+def _public_base_url(workspace_id: int = 1) -> str:
+    ws = db.get_workspace(workspace_id)
+    custom = (ws.get("public_base_url") or "").strip().rstrip("/")
+    if custom.startswith(("http://", "https://")):
+        return custom
+    return request.host_url.rstrip("/")
+
+
 def _hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000).hex()
@@ -145,6 +160,7 @@ PUBLIC_PREFIXES = (
     "/api/booking/slots",
     "/receipt/",
     "/quote/",
+    "/api/quotes/",
     "/mon-espace/",
     "/f/",
     "/l/",
@@ -160,6 +176,7 @@ CSRF_EXEMPT_PREFIXES = (
     "/unsubscribe/",
     "/f/",
     "/rdv",
+    "/api/quotes/",
 )
 
 ADMIN_ONLY_PREFIXES = (
@@ -3944,12 +3961,72 @@ def public_client_portal(token: str):
         appointments=data["appointments"],
         summary=data["summary"],
         online_pay_url=data["online_pay_url"],
+        referral=data.get("referral"),
+        public_base_url=_public_base_url(int(data["workspace"].get("id") or 1)),
     )
 
 
 @app.route("/api/notifications", methods=["GET"])
 def api_notifications():
     return jsonify(premium_hub.get_notifications(_active_ws_id()))
+
+
+# ---------------- PACK 4: WAR ROOM TV, E-SIGN, WHAT-IF FORECAST, WIN-BACK & REFERRALS ----------------
+
+@app.route("/war-room", methods=["GET"])
+def war_room_page():
+    ws = db.get_workspace(_active_ws_id())
+    return render_template("war_room.html", workspace=ws)
+
+
+@app.route("/api/war-room/live", methods=["GET"])
+def api_war_room_live():
+    return jsonify(premium_hub.get_war_room_live(_active_ws_id()))
+
+
+@app.route("/api/executive/forecast", methods=["GET"])
+def api_executive_forecast():
+    return jsonify(premium_hub.compute_revenue_forecast(_active_ws_id()))
+
+
+@app.route("/api/executive/at-risk", methods=["GET"])
+def api_executive_at_risk():
+    return jsonify(premium_hub.detect_at_risk_revenue(_active_ws_id()))
+
+
+@app.route("/api/executive/winback", methods=["POST"])
+def api_executive_winback():
+    data = request.get_json(force=True, silent=True) or {}
+    res = premium_hub.send_winback_whatsapp(
+        kind=(data.get("kind") or "").strip(),
+        item_id=int(data.get("item_id") or 0),
+        workspace_id=_active_ws_id(),
+    )
+    if not res.get("ok"):
+        return jsonify(res), 400
+    return jsonify(res)
+
+
+@app.route("/api/quotes/<int:qid>/sign", methods=["POST"])
+def api_sign_quote(qid: int):
+    if not _check_rate_limit("quote_sign", max_hits=15, window_sec=60):
+        return jsonify({"ok": False, "error": "Trop de tentatives."}), 429
+    data = request.get_json(force=True, silent=True) or {}
+    res = quotes_hub.sign_quote(
+        qid=qid,
+        signed_by=data.get("signed_by") or "",
+        signature_data=data.get("signature_data") or "",
+        client_ip=(request.remote_addr or ""),
+    )
+    if not res.get("ok"):
+        return jsonify(res), 400
+    _log_audit("quote_signed", f"{res.get('quote_num')} signé par {res.get('signed_by')}")
+    return jsonify(res)
+
+
+@app.route("/api/referrals/leaderboard", methods=["GET"])
+def api_referral_leaderboard():
+    return jsonify({"items": premium_hub.get_referral_leaderboard(_active_ws_id())})
 
 
 if __name__ == "__main__":

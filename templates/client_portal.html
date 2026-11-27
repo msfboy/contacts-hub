@@ -195,6 +195,29 @@
     </div>
     {% endif %}
 
+    {% if referral %}
+    <div class="card" style="background:linear-gradient(135deg,#fffbeb 0%,#ffffff 100%);border:1px solid #fde68a;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+        <div>
+          <h2 style="margin:0 0 4px;">🔥 Programme Ambassadeur &amp; Parrainage VIP</h2>
+          <div style="font-size:13px;color:#475569;">
+            Partagez votre lien personnel : chaque ami inscrit vous crédite automatiquement <strong>+100 points VIP</strong> !
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:20px;font-weight:800;color:#b45309;">{{ referral.referrals_count }} filleul(s) · {{ referral.points }} pts</div>
+          <div style="font-size:12px;color:#64748b;">Code parrain : <strong>{{ referral.code }}</strong></div>
+        </div>
+      </div>
+      {% set full_ref_url = public_base_url ~ referral.share_path %}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+        <input type="text" id="portalRefUrl" value="{{ full_ref_url }}" readonly style="flex:1;min-width:220px;padding:9px 12px;border:1px solid #fcd34d;border-radius:8px;background:#fff;font-size:13px;" />
+        <button type="button" class="btn btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('portalRefUrl').value);this.textContent='✅ Lien copié !';">📋 Copier mon lien</button>
+        <a class="btn btn-green" target="_blank" rel="noopener noreferrer" href="https://wa.me/?text={{ ('Bonjour ! Je te recommande ' ~ workspace.name ~ ' ! Inscris-toi via mon lien VIP : ' ~ full_ref_url) | urlencode }}">📲 Partager sur WhatsApp</a>
+      </div>
+    </div>
+    {% endif %}
+
     {% if appointments %}
     <div class="card">
       <h2>📅 Mes Rendez-vous</h2>

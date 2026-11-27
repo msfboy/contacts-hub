@@ -1,3 +1,4 @@
+import hashlib
 import json
 import secrets
 from datetime import datetime, timedelta
@@ -263,3 +264,65 @@ def delete_quote(qid: int) -> Dict[str, Any]:
     with db.get_conn() as conn:
         conn.execute("DELETE FROM quotes WHERE id = ?", (qid,))
     return {"ok": True}
+
+
+def sign_quote(qid: int, signed_by: str, signature_data: str, client_ip: str = "") -> Dict[str, Any]:
+    """Record a legally timestamped electronic signature + SHA-256 certificate on a quote."""
+    signer = (signed_by or "").strip()[:120]
+    sig = (signature_data or "").strip()
+    if not signer:
+        return {"ok": False, "error": "Veuillez saisir votre nom complet pour signer."}
+    if not sig.startswith("data:image/png;base64,") or len(sig) > 250_000:
+        return {"ok": False, "error": "Signature tactile invalide ou trop volumineuse."}
+
+    now = _now()
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT * FROM quotes WHERE id = ?", (qid,)).fetchone()
+        if not row:
+            return {"ok": False, "error": "Devis introuvable."}
+        q = dict(row)
+        if q.get("status") == "paid":
+            return {"ok": False, "error": "Ce devis est déjà payé."}
+
+        proof_src = f"{q['quote_num']}|{q['total_amount']}|{signer}|{now}|{client_ip}|{sig[:128]}"
+        sig_hash = hashlib.sha256(proof_src.encode("utf-8")).hexdigest()[:32].upper()
+
+        conn.execute(
+            """
+            UPDATE quotes SET
+                status = 'accepted',
+                signed_by = ?,
+                signed_at = ?,
+                signature_data = ?,
+                signature_hash = ?,
+                signed_ip = ?
+            WHERE id = ?
+            """,
+            (signer, now, sig, sig_hash, (client_ip or "")[:64], qid),
+        )
+        if q.get("contact_id"):
+            conn.execute(
+                "INSERT INTO contact_activities (contact_id, kind, content, created_at) VALUES (?, 'note', ?, ?)",
+                (
+                    int(q["contact_id"]),
+                    f"✍️ DEVIS SIGNÉ ÉLECTRONIQUEMENT : {q['quote_num']} par {signer} (Certificat SHA-256: {sig_hash})",
+                    now,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO contact_tasks (contact_id, title, due_date, done, created_at) VALUES (?, ?, ?, 0, ?)",
+                (
+                    int(q["contact_id"]),
+                    f"🚨 Devis {q['quote_num']} signé par {signer} — encaisser {_fmt_money(q['total_amount'], q.get('currency') or 'FCFA')}",
+                    now[:10],
+                    now,
+                ),
+            )
+    return {
+        "ok": True,
+        "quote_num": q["quote_num"],
+        "signed_by": signer,
+        "signed_at": now,
+        "signature_hash": sig_hash,
+    }
+

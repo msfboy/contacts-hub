@@ -464,6 +464,57 @@ class ContactsHubTestSuite(unittest.TestCase):
         self.assertIn("items", notifs)
         self.assertGreaterEqual(notifs["count"], 1)
 
+    # --- 13. Pack 4 (War Room TV, E-Signature, What-If Forecast, At-Risk Win-Back, Viral Referrals) ---
+    def test_15_pack4_warroom_esign_forecast_winback_referrals(self):
+        import premium_hub
+        import quotes_hub
+
+        # War Room TV page & live telemetry
+        r_wr = self.client.get("/war-room")
+        self.assertEqual(r_wr.status_code, 200)
+        self.assertIn("WAR ROOM", r_wr.get_data(as_text=True))
+        wr_live = premium_hub.get_war_room_live(1)
+        self.assertIn("kpis", wr_live)
+
+        # What-If Revenue Forecast
+        fc = premium_hub.compute_revenue_forecast(1)
+        self.assertGreater(fc["forecast_90d"], 0)
+
+        # Radar CA en Danger
+        ar = premium_hub.detect_at_risk_revenue(1)
+        self.assertIn("total_at_risk", ar)
+
+        # Tactile E-Signature on B2B Quote + SHA-256 certificate
+        q = quotes_hub.create_quote({
+            "client_name": "PDG Test",
+            "title": "Pack Enterprise Signature",
+            "items": [{"label": "Licence Annuelle", "qty": 1, "unit_price": 150000}],
+        })
+        self.assertTrue(q["ok"])
+        fake_png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        r_sig = self.client.post(
+            f"/api/quotes/{q['id']}/sign",
+            json={"signed_by": "PDG Test", "signature_data": fake_png},
+        )
+        self.assertEqual(r_sig.status_code, 200)
+        sig_json = r_sig.get_json()
+        self.assertTrue(sig_json["ok"])
+        self.assertEqual(len(sig_json["signature_hash"]), 32)
+
+        r_qpage = self.client.get(f"/quote/{q['id']}")
+        self.assertIn(sig_json["signature_hash"], r_qpage.get_data(as_text=True))
+
+        # Viral Referral Engine
+        with db.get_conn() as conn:
+            rows = conn.execute("SELECT id FROM contacts ORDER BY id ASC LIMIT 2").fetchall()
+        if len(rows) >= 2:
+            c1, c2 = int(rows[0]["id"]), int(rows[1]["id"])
+            code = premium_hub.ensure_referral_code(c1)
+            self.assertTrue(code.startswith("VIP"))
+            self.assertTrue(premium_hub.attribute_referral(c2, code))
+            stats = premium_hub.get_referral_stats(c1)
+            self.assertGreaterEqual(stats["referrals_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
