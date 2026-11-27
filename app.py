@@ -24,6 +24,7 @@ import campaigns
 import connectors
 import db
 import enrichment
+import executive_brief
 import gdrive_client
 import licensing
 import local_radar
@@ -35,6 +36,7 @@ import services
 import social_hub
 import wa_broadcast
 import wa_client
+import workflows_engine
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMPORTS_DIR = os.path.join(db.DATA_DIR, "imports_cache")
@@ -406,6 +408,59 @@ def api_upload_workspace_logo():
     logo_url = f"/uploads/{fname}?v={int(time.time())}"
     db.update_workspace(ws_id, {"logo_url": logo_url})
     return jsonify({"ok": True, "logo_url": logo_url})
+
+
+@app.route("/api/executive/brief", methods=["GET"])
+def api_executive_brief():
+    return jsonify(executive_brief.generate_executive_brief(workspace_id=_current_workspace_id()))
+
+
+@app.route("/api/executive/target", methods=["POST"])
+def api_executive_target():
+    data = request.get_json(silent=True) or {}
+    val = executive_brief.set_monthly_target(float(data.get("monthly_target") or 0), workspace_id=_current_workspace_id())
+    return jsonify({"ok": True, "monthly_target": val})
+
+
+@app.route("/executive-report", methods=["GET"])
+def view_executive_report():
+    brief = executive_brief.generate_executive_brief(workspace_id=_current_workspace_id())
+    return render_template("executive_report.html", **brief)
+
+
+@app.route("/api/wa/autopilot", methods=["GET", "POST"])
+def api_wa_autopilot():
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        cfg = wa_client.save_autopilot_config(
+            enabled=bool(data.get("enabled")),
+            escalation_keywords=data.get("escalation_keywords") or "",
+        )
+        _log_audit("wa_autopilot", f"Autopilote WA IA : {'activé' if cfg['enabled'] else 'désactivé'}")
+        return jsonify(cfg)
+    return jsonify(wa_client.get_autopilot_config())
+
+
+@app.route("/api/workflows", methods=["GET", "POST"])
+def api_workflows():
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        res = workflows_engine.create_rule(data)
+        if not res.get("ok"):
+            return jsonify({"error": res.get("error")}), 400
+        return jsonify(res), 201
+    return jsonify({"items": workflows_engine.list_rules()})
+
+
+@app.route("/api/workflows/<int:rid>/toggle", methods=["POST"])
+def api_workflows_toggle(rid: int):
+    data = request.get_json(silent=True) or {}
+    return jsonify(workflows_engine.toggle_rule(rid, bool(data.get("enabled"))))
+
+
+@app.route("/api/workflows/<int:rid>", methods=["DELETE"])
+def api_workflows_delete(rid: int):
+    return jsonify(workflows_engine.delete_rule(rid))
 
 
 @app.route("/")
@@ -3478,6 +3533,17 @@ def public_capture_form(slug: str):
 
             base_pub = (ws.get("public_base_url") or request.host_url).rstrip("/")
             dossier_url = f"{base_pub}/f/dossier/{dossier_used}"
+            try:
+                workflows_engine.fire_event("form_submitted", {
+                    "contact_id": cid,
+                    "full_name": full_name,
+                    "email": email_addr,
+                    "phone": phone,
+                    "course_name": form["title"],
+                    "lead_score": 95,
+                })
+            except Exception:
+                pass
 
             if phone:
                 wa_broadcast.trigger_auto_welcome_wa(

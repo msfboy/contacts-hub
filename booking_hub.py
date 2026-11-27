@@ -171,6 +171,17 @@ def create_appointment(data: Dict[str, Any]) -> Dict[str, Any]:
         f"À très bientôt ! 🙏"
     )
     _send_wa_async(phone, wa_msg)
+    try:
+        import workflows_engine
+        workflows_engine.fire_event("booking_created", {
+            "contact_id": cid,
+            "full_name": full_name,
+            "email": email,
+            "phone": phone,
+            "course_name": topic,
+        })
+    except Exception:
+        pass
 
     return {"ok": True, "id": aid, "booking_ref": booking_ref}
 

@@ -24,12 +24,14 @@ import booking_hub  # noqa: E402
 import campaigns  # noqa: E402
 import db  # noqa: E402
 import enrichment  # noqa: E402
+import executive_brief  # noqa: E402
 import gdrive_client  # noqa: E402
 import licensing  # noqa: E402
 import net_guard  # noqa: E402
 import parsers  # noqa: E402
 import payments_hub  # noqa: E402
 import wa_client  # noqa: E402
+import workflows_engine  # noqa: E402
 
 
 class ContactsHubTestSuite(unittest.TestCase):
@@ -333,6 +335,34 @@ class ContactsHubTestSuite(unittest.TestCase):
         self.assertEqual(r_exp.status_code, 200)
         self.assertIn("spreadsheetml", r_exp.content_type)
         self.assertGreater(len(r_exp.data), 500)
+
+    # --- 10. Pack 1 (#1 Executive Brief, #2 WA Autopilot, #3 Workflows) ---
+    def test_12_pack1_executive_autopilot_and_workflows(self):
+        # #1 Executive Brief + PDF HTML Report
+        brief = executive_brief.generate_executive_brief()
+        self.assertIn("recommendations", brief)
+        r_rep = self.client.get("/executive-report")
+        self.assertEqual(r_rep.status_code, 200)
+        self.assertIn("Presidential Daily Brief", r_rep.get_data(as_text=True))
+
+        # #2 WhatsApp AI Autopilot config
+        cfg = wa_client.save_autopilot_config(True, "payer,directeur")
+        self.assertTrue(cfg["enabled"])
+        wa_client.save_autopilot_config(False)
+
+        # #3 Workflows engine (If -> Then)
+        wf = workflows_engine.create_rule({
+            "name": "Test VIP Tag",
+            "trigger_event": "payment_received",
+            "action_type": "add_tag",
+            "action_config": {"tag": "AutoVIP"},
+        })
+        self.assertTrue(wf["ok"])
+        with db.get_conn() as conn:
+            c_row = conn.execute("SELECT id FROM contacts LIMIT 1").fetchone()
+        if c_row:
+            ran = workflows_engine.fire_event("payment_received", {"contact_id": c_row["id"], "full_name": "Test"})
+            self.assertGreaterEqual(ran, 1)
 
 
 if __name__ == "__main__":

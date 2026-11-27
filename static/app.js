@@ -112,13 +112,13 @@ const STATUS_LABELS = {
 function switchTab(tab) {
   document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll(".tab-panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${tab}`));
-  if (tab === "crm") { loadKanban(); loadTasks(); loadSegments(); }
-  if (tab === "conversion") { loadWaTemplates(); loadHotSignals(); loadTrackedLinks(); loadLeadForms(); initWaInbox(); }
+  if (tab === "crm") { loadKanban(); loadTasks(); loadSegments(); loadWorkflows(); }
+  if (tab === "conversion") { loadWaTemplates(); loadHotSignals(); loadTrackedLinks(); loadLeadForms(); initWaInbox(); loadWaAutopilot(); }
   else { stopWaPolling(); }
   if (tab === "training-forms") loadTrainingForms();
   if (tab === "payments") loadPayments();
   if (tab === "booking") loadBookingHub();
-  if (tab === "dashboard") loadDashboard();
+  if (tab === "dashboard") { loadDashboard(); loadExecutiveBrief(); }
   if (tab === "quality") loadDuplicates();
   if (tab === "gdrive" && !state.driveLoaded) loadDriveFiles();
   if (tab === "local" && !state.localLoaded) initLocalBrowser();
@@ -253,7 +253,8 @@ document.querySelectorAll(".subtab").forEach((btn) => {
     if (btn.dataset.subtab === "crm-kanban") loadKanban();
     if (btn.dataset.subtab === "crm-tasks") loadTasks();
     if (btn.dataset.subtab === "crm-segments") loadSegments();
-    if (btn.dataset.subtab === "conv-wa") { loadWaTemplates(); loadHotSignals(); initWaInbox(); }
+    if (btn.dataset.subtab === "crm-workflows") loadWorkflows();
+    if (btn.dataset.subtab === "conv-wa") { loadWaTemplates(); loadHotSignals(); initWaInbox(); loadWaAutopilot(); }
     if (btn.dataset.subtab === "conv-broadcast") { loadBroadcastHub(); }
     if (btn.dataset.subtab === "conv-social") { loadSocialHub(); }
     if (btn.dataset.subtab === "conv-radar") { loadRadarAndAiSettings(); }
@@ -491,7 +492,132 @@ async function loadDashboard() {
   }
 }
 
-$("dashRefreshBtn")?.addEventListener("click", loadDashboard);
+$("dashRefreshBtn")?.addEventListener("click", () => { loadDashboard(); loadExecutiveBrief(); });
+
+// ---------------- #1 PRESIDENTIAL EXECUTIVE BRIEF ----------------
+async function loadExecutiveBrief() {
+  try {
+    const b = await api("/api/executive/brief");
+    const k = b.kpis || {};
+    if ($("execTargetInput") && k.monthly_target !== undefined) $("execTargetInput").value = String(Math.round(k.monthly_target));
+    if ($("execTargetBar")) $("execTargetBar").style.width = `${Math.min(100, Number(k.target_pct || 0))}%`;
+    if ($("execBriefSub")) {
+      $("execBriefSub").textContent = `${fmtFcfa(k.month_revenue)} / ${fmtFcfa(k.monthly_target)} (${k.target_pct || 0}% de l'objectif ${b.month}) · Taux closing : ${k.conversion_rate || 0}%`;
+    }
+    const ul = $("execRecList");
+    if (ul) {
+      ul.innerHTML = (b.recommendations || []).map((r) => `<li>${esc(r)}</li>`).join("");
+    }
+  } catch {}
+}
+$("saveExecTargetBtn")?.addEventListener("click", async () => {
+  try {
+    await api("/api/executive/target", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ monthly_target: Number($("execTargetInput")?.value || 0) }),
+    });
+    toast("Objectif mensuel mis à jour !", "success");
+    loadExecutiveBrief();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+// ---------------- #2 WHATSAPP AI 24/7 AUTOPILOT ----------------
+async function loadWaAutopilot() {
+  try {
+    const cfg = await api("/api/wa/autopilot");
+    if ($("waAutopilotToggle")) $("waAutopilotToggle").checked = Boolean(cfg.enabled);
+    if ($("waAutopilotEscInput")) $("waAutopilotEscInput").value = cfg.escalation_keywords || "";
+  } catch {}
+}
+$("saveWaAutopilotBtn")?.addEventListener("click", async () => {
+  try {
+    const cfg = await api("/api/wa/autopilot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled: Boolean($("waAutopilotToggle")?.checked),
+        escalation_keywords: $("waAutopilotEscInput")?.value || "",
+      }),
+    });
+    toast(cfg.enabled ? "🤖 Pilote Automatique WhatsApp IA ACTIVÉ 24h/24 !" : "Pilote Automatique WhatsApp désactivé.", "success");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+// ---------------- #3 WORKFLOWS SI -> ALORS ----------------
+async function loadWorkflows() {
+  const tbody = $("workflowsTbody");
+  if (!tbody) return;
+  try {
+    const data = await api("/api/workflows");
+    const items = data.items || [];
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">Aucune règle configurée.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items
+      .map(
+        (r) => `
+        <tr>
+          <td><input type="checkbox" class="wf-toggle" data-id="${r.id}" ${r.enabled ? "checked" : ""} /></td>
+          <td><strong>${esc(r.name)}</strong></td>
+          <td><code>${esc(r.trigger_event)}</code></td>
+          <td><code>${esc(r.action_type)}</code> <span class="subtitle">${esc(JSON.stringify(r.action_config || {}))}</span></td>
+          <td><span class="badge badge-tag">${Number(r.runs_count || 0)}×</span></td>
+          <td class="col-actions"><button class="icon-btn danger wf-del-btn" data-id="${r.id}">🗑</button></td>
+        </tr>`
+      )
+      .join("");
+    tbody.querySelectorAll(".wf-toggle").forEach((cb) => {
+      cb.addEventListener("change", async () => {
+        await api(`/api/workflows/${cb.dataset.id}/toggle`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: cb.checked }),
+        });
+        toast(cb.checked ? "Automatisation activée" : "Automatisation mise en pause", "info");
+      });
+    });
+    tbody.querySelectorAll(".wf-del-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        await api(`/api/workflows/${btn.dataset.id}`, { method: "DELETE" });
+        toast("Règle supprimée", "info");
+        loadWorkflows();
+      });
+    });
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+$("createWfBtn")?.addEventListener("click", async () => {
+  const name = ($("wfName")?.value || "").trim();
+  const trigger_event = $("wfTrigger")?.value || "form_submitted";
+  const action_type = $("wfAction")?.value || "add_tag";
+  const val = ($("wfActionVal")?.value || "").trim();
+  if (!name || !val) return toast("Nom de la règle et valeur d'action requis.", "error");
+  const action_config =
+    action_type === "add_tag" ? { tag: val }
+    : action_type === "create_task" ? { title: val, due_days: 0 }
+    : action_type === "update_status" ? { status: val }
+    : { message: val };
+  try {
+    await api("/api/workflows", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, trigger_event, action_type, action_config }),
+    });
+    $("wfName").value = "";
+    $("wfActionVal").value = "";
+    toast("Automatisation créée et activée !", "success");
+    loadWorkflows();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
 
 $("backupDriveBtn").addEventListener("click", async () => {
   $("backupDriveBtn").disabled = true;

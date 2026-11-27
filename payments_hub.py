@@ -92,6 +92,18 @@ def create_payment(data: Dict[str, Any]) -> Dict[str, Any]:
                 (cid, f"💰 Paiement reçu : {_fmt_money(amount_paid)} ({method}) — {course_name} · Reçu {receipt_num}", now),
             )
 
+    try:
+        import workflows_engine
+        workflows_engine.fire_event("payment_received", {
+            "contact_id": cid,
+            "full_name": student_name,
+            "email": student_email,
+            "phone": student_phone,
+            "course_name": course_name,
+        })
+    except Exception:
+        pass
+
     return {"ok": True, "id": pid, "receipt_num": receipt_num}
 
 

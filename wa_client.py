@@ -146,6 +146,84 @@ def _is_real_wa_phone(jid: str, phone: str) -> bool:
     return 7 <= len(d) <= 13
 
 
+_AUTOPILOT_COOLDOWN: Dict[str, float] = {}
+DEFAULT_ESCALATION_KEYWORDS = "payer,paiement,remise,réduction,directeur,plainte,problème,urgence,appeler,remboursement"
+
+
+def get_autopilot_config() -> Dict[str, Any]:
+    with db.get_conn() as conn:
+        en = conn.execute("SELECT value FROM app_settings WHERE key = 'wa_autopilot_enabled'").fetchone()
+        kw = conn.execute("SELECT value FROM app_settings WHERE key = 'wa_autopilot_escalation'").fetchone()
+    return {
+        "enabled": bool(en and en["value"] == "1"),
+        "escalation_keywords": kw["value"] if kw and kw["value"] else DEFAULT_ESCALATION_KEYWORDS,
+    }
+
+
+def save_autopilot_config(enabled: bool, escalation_keywords: str = "") -> Dict[str, Any]:
+    kw_clean = (escalation_keywords or DEFAULT_ESCALATION_KEYWORDS).strip()[:400]
+    with db.get_conn() as conn:
+        for k, v in [("wa_autopilot_enabled", "1" if enabled else "0"), ("wa_autopilot_escalation", kw_clean)]:
+            conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (k, v),
+            )
+    return get_autopilot_config()
+
+
+def _maybe_trigger_autopilot(phone: str, jid: str, cid: Optional[int], push_name: str, body: str) -> None:
+    cfg = get_autopilot_config()
+    if not cfg.get("enabled"):
+        return
+    now_ts = time.time()
+    last_ts = _AUTOPILOT_COOLDOWN.get(phone, 0.0)
+    if now_ts - last_ts < 90.0:
+        return
+
+    body_low = (body or "").lower()
+    if body_low.strip() in ("stop", "arreter", "arrêter", "desinscrire", "désinscrire"):
+        if cid:
+            with db.get_conn() as conn:
+                conn.execute("UPDATE contacts SET status = 'unsubscribed', updated_at = ? WHERE id = ?", (datetime.now().isoformat(timespec="seconds"), cid))
+        return
+
+    esc_words = [w.strip().lower() for w in (cfg.get("escalation_keywords") or "").split(",") if w.strip()]
+    if any(w in body_low for w in esc_words):
+        if cid:
+            now_iso = datetime.now().isoformat(timespec="seconds")
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            with db.get_conn() as conn:
+                conn.execute("UPDATE contacts SET status = 'followup', lead_score = MAX(COALESCE(lead_score, 0), 95), updated_at = ? WHERE id = ?", (now_iso, cid))
+                conn.execute(
+                    "INSERT INTO contact_tasks (contact_id, title, due_date, done, created_at) VALUES (?, ?, ?, 0, ?)",
+                    (cid, f"🚨 Escalade Autopilote WA ({push_name or phone}) : {body[:90]}", today_str, now_iso),
+                )
+        return
+
+    _AUTOPILOT_COOLDOWN[phone] = now_ts
+
+    def _bg_reply():
+        try:
+            import ai_assistant
+            msgs = list_messages(phone=phone, jid=jid, contact_id=cid)
+            ws = db.get_workspace(1)
+            base_pub = (ws.get("public_base_url") or "http://127.0.0.1:5050").rstrip("/")
+            res = ai_assistant.suggest_reply(
+                contact_name=push_name or phone,
+                messages=msgs,
+                goal="repondre",
+                booking_url=f"{base_pub}/rdv",
+            )
+            reply = (res.get("reply") or "").strip()
+            if reply:
+                bridge_post("/send", {"phone": phone, "jid": jid, "text": reply}, timeout=15.0)
+        except Exception:
+            pass
+
+    import threading
+    threading.Thread(target=_bg_reply, daemon=True).start()
+
+
 def process_webhook_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     event = payload.get("event") or ""
     now = datetime.now().isoformat(timespec="seconds")
@@ -239,6 +317,8 @@ def process_webhook_event(payload: Dict[str, Any]) -> Dict[str, Any]:
                             """,
                             (now, cid),
                         )
+                if is_realtime and not from_me:
+                    _maybe_trigger_autopilot(phone=phone, jid=jid, cid=cid, push_name=push_name, body=body)
 
     return {"ok": True, "contacts_saved": contacts_saved, "messages_saved": messages_saved}
 

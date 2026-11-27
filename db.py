@@ -848,6 +848,23 @@ def init_db() -> None:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS automation_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                enabled INTEGER DEFAULT 1,
+                trigger_event TEXT NOT NULL,
+                condition_json TEXT DEFAULT '{}',
+                action_type TEXT NOT NULL,
+                action_config_json TEXT DEFAULT '{}',
+                runs_count INTEGER DEFAULT 0,
+                last_run_at TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
         # Clean up legacy unresolved WhatsApp @lid ghost records (fake 14-15 digit numbers)
         conn.execute("DELETE FROM whatsapp_messages WHERE jid LIKE '%@lid' OR LENGTH(REPLACE(phone, '+', '')) >= 14")
         conn.execute("DELETE FROM whatsapp_contacts WHERE jid LIKE '%@lid' OR LENGTH(REPLACE(phone, '+', '')) >= 14")

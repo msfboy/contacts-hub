@@ -296,6 +296,7 @@
           <button class="subtab active" data-subtab="crm-kanban">🗂 Pipeline Kanban</button>
           <button class="subtab" data-subtab="crm-tasks">⏰ Rappels & Tâches</button>
           <button class="subtab" data-subtab="crm-segments">🎯 Segments dynamiques</button>
+          <button class="subtab" data-subtab="crm-workflows">⚡ Automatisations (Si→Alors)</button>
         </div>
 
         <!-- Kanban -->
@@ -371,6 +372,68 @@
             <div class="empty-cell">Chargement des segments…</div>
           </div>
         </div>
+
+        <!-- No-Code Automations (Si -> Alors) -->
+        <div class="subtab-panel" id="subtab-crm-workflows">
+          <div class="card" style="margin-bottom:16px">
+            <div class="browser-header">
+              <div>
+                <strong>⚡ Moteur d'Automatisations « Si → Alors » (No-Code)</strong>
+                <div class="subtitle">Créez vos propres scénarios automatiques : chaque événement déclenche instantanément une action CRM ou WhatsApp.</div>
+              </div>
+              <button class="btn btn-secondary btn-sm" id="wfRefreshBtn">↻ Actualiser</button>
+            </div>
+            <div class="grid-3" style="margin-top:12px;gap:10px">
+              <div class="field">
+                <label>Nom de la règle</label>
+                <input type="text" id="wfName" placeholder="Ex: Relance VIP après inscription">
+              </div>
+              <div class="field">
+                <label>SI cet événement arrive…</label>
+                <select id="wfTrigger">
+                  <option value="payment_received">💳 Paiement encaissé</option>
+                  <option value="form_submitted">🎓 Nouvelle inscription formation</option>
+                  <option value="booking_created">📅 Nouveau rendez-vous réservé</option>
+                  <option value="contact_created">👤 Nouveau contact créé</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>ALORS exécuter…</label>
+                <select id="wfAction">
+                  <option value="send_whatsapp">💬 Envoyer un message WhatsApp</option>
+                  <option value="add_tag">🏷️ Ajouter un tag au contact</option>
+                  <option value="create_task">⏰ Créer une tâche de suivi</option>
+                  <option value="set_status">🔄 Changer le statut CRM</option>
+                </select>
+              </div>
+            </div>
+            <div class="grid-2" style="margin-top:8px;gap:10px">
+              <div class="field">
+                <label>Paramètre d'action (message WhatsApp, nom du tag, titre de tâche ou statut)</label>
+                <input type="text" id="wfActionParam" placeholder="Ex: Merci {name} pour votre confiance ! ou VIP_Paye">
+              </div>
+              <div class="field" style="display:flex;align-items:flex-end">
+                <button class="btn btn-primary" id="wfCreateBtn" style="width:100%">➕ Créer la règle automatique</button>
+              </div>
+            </div>
+            <div class="hint" style="margin-top:6px">Variables disponibles dans les messages/tâches : <code>{name}</code>, <code>{amount}</code>, <code>{currency}</code>, <code>{date}</code>, <code>{time}</code>, <code>{form_title}</code>.</div>
+          </div>
+          <div class="card table-card">
+            <div class="browser-header">
+              <strong>Règles d'automatisation actives</strong>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th>Règle</th><th>Déclencheur (SI)</th><th>Action (ALORS)</th><th>Exécutions</th><th>Statut</th><th class="col-actions">Actions</th></tr>
+                </thead>
+                <tbody id="wfTbody">
+                  <tr><td colspan="6" class="empty-cell">Chargement des automatisations…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- TAB 1C: CONVERSION, WHATSAPP, TRACKED LINKS & LEAD FORMS -->
@@ -407,6 +470,18 @@
               <button class="btn btn-secondary btn-sm hidden" id="waSyncBtn">🔄 Synchroniser</button>
               <button class="btn btn-secondary btn-sm" id="waImportContactsBtn">📥 Importer contacts WhatsApp dans le CRM</button>
               <button class="btn btn-danger btn-sm hidden" id="waLogoutBtn">🔌 Déconnecter</button>
+            </div>
+          </div>
+
+          <!-- #2 WhatsApp AI 24/7 Autopilot Bar -->
+          <div class="card" style="padding:12px 16px;margin-bottom:12px;background:#f0fdf4;border:1px solid #bbf7d0;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+            <label style="display:flex;align-items:center;gap:8px;font-weight:700;font-size:13.5px;color:#166534;cursor:pointer;">
+              <input type="checkbox" id="waAutopilotToggle" />
+              <span>🤖 Pilote Automatique WhatsApp IA 24h/24 (répond seul &amp; escalade si paiement/urgence)</span>
+            </label>
+            <div style="display:flex;gap:8px;align-items:center;flex:1;min-width:240px;justify-content:flex-end;">
+              <input type="text" id="waAutopilotEscInput" class="input input-sm" style="flex:1;max-width:340px;background:#fff;" placeholder="Mots-clés escalade humain (ex: payer, remise, directeur…)" />
+              <button type="button" class="btn btn-primary btn-sm" id="saveWaAutopilotBtn">💾 Enregistrer</button>
             </div>
           </div>
 
@@ -1146,6 +1221,7 @@ Virement</textarea></label>
             <p class="subtitle">Trésorerie, pipeline CA, acquisition multicanale, prospects chauds et agenda du jour en un coup d'œil.</p>
           </div>
           <div class="header-actions" style="display:flex;gap:8px;flex-wrap:wrap;">
+            <a class="btn btn-primary btn-sm" href="/executive-report" target="_blank" rel="noopener noreferrer" style="background:linear-gradient(135deg,#0f172a,#b45309);">👑 Rapport Direction PDF</a>
             <button class="btn btn-secondary btn-sm" id="dashRefreshBtn">↻ Actualiser</button>
             <a class="btn btn-secondary btn-sm" href="/api/backup/download">⬇ Backup (.db)</a>
             <button class="btn btn-primary btn-sm" id="backupDriveBtn">☁️ Backup Drive</button>
@@ -1159,6 +1235,26 @@ Virement</textarea></label>
           <button class="btn btn-secondary btn-sm" onclick="switchTab('booking')">📅 Gérer les RDV</button>
           <a class="btn btn-secondary btn-sm" href="/rdv" target="_blank">🔗 Page publique RDV</a>
           <button class="btn btn-secondary btn-sm" onclick="switchTab('crm')">📌 Pipeline Kanban</button>
+        </div>
+
+        <!-- #1 Presidential Daily Brief Card -->
+        <div class="card" id="execBriefCard" style="padding:18px;margin-bottom:16px;border-left:4px solid #c8a45d;background:linear-gradient(135deg,#fffbeb 0%,#ffffff 100%);">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+            <div>
+              <h3 style="margin:0;">👑 Briefing Exécutif IA du Jour</h3>
+              <div class="subtitle" id="execBriefSub" style="margin-top:2px;">Synthèse stratégique et cap sur l'objectif mensuel</div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+              <span style="font-size:12px;font-weight:600;color:var(--muted);">Objectif mois :</span>
+              <input type="number" id="execTargetInput" class="input input-sm" style="width:130px;" min="0" step="50000" value="1500000" />
+              <button type="button" class="btn btn-secondary btn-sm" id="saveExecTargetBtn">💾 Fixer</button>
+              <a class="btn btn-primary btn-sm" href="/executive-report" target="_blank" rel="noopener noreferrer">⬇️ PDF A4</a>
+            </div>
+          </div>
+          <div style="background:#e2e8f0;border-radius:999px;height:10px;overflow:hidden;margin-bottom:12px;">
+            <div id="execTargetBar" style="height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#16a34a);transition:width .35s;"></div>
+          </div>
+          <ul id="execRecList" style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px;font-size:13px;color:#334155;"></ul>
         </div>
 
         <!-- 6 Executive KPI Cards -->
