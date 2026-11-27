@@ -128,8 +128,36 @@ function switchTab(tab) {
   if (tab === "admin") loadAdmin();
 }
 
+function closeMobileSidebar() {
+  $("appSidebar")?.classList.remove("open");
+  $("sidebarBackdrop")?.classList.add("hidden");
+}
+
+function openMobileSidebar() {
+  $("appSidebar")?.classList.add("open");
+  $("sidebarBackdrop")?.classList.remove("hidden");
+}
+
+$("mobileMenuBtn")?.addEventListener("click", openMobileSidebar);
+$("mobileCloseSidebarBtn")?.addEventListener("click", closeMobileSidebar);
+$("sidebarBackdrop")?.addEventListener("click", closeMobileSidebar);
+$("mobileAddContactBtn")?.addEventListener("click", () => {
+  closeMobileSidebar();
+  $("openAddModalBtn")?.click();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeMobileSidebar();
+    document.querySelectorAll(".modal-backdrop:not(.hidden)").forEach((m) => m.classList.add("hidden"));
+  }
+});
+
 document.querySelectorAll(".nav-item").forEach((btn) => {
-  btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+  btn.addEventListener("click", () => {
+    closeMobileSidebar();
+    switchTab(btn.dataset.tab);
+  });
 });
 
 document.querySelectorAll(".subtab").forEach((btn) => {
@@ -3614,6 +3642,7 @@ function applyWorkspaceBranding(ws) {
   document.documentElement.style.setProperty("--primary", color);
   document.title = `${name} — Plateforme CRM & Emailing`;
   if ($("brandName")) $("brandName").textContent = name;
+  if ($("mobileBrandTitle")) $("mobileBrandTitle").textContent = name;
   if ($("brandTagline")) $("brandTagline").textContent = tagline;
   if ($("brandIcon")) {
     if (ws.logo_url && safeUrl(ws.logo_url) !== "#") {

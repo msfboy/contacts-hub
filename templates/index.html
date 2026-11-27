@@ -12,15 +12,24 @@
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
+  <!-- Mobile Top Header (visible < 1024px) -->
+  <header class="mobile-topbar">
+    <button type="button" class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Ouvrir le menu de navigation">☰</button>
+    <div class="mobile-brand" id="mobileBrandTitle">ContactsHub</div>
+    <button type="button" class="btn btn-primary btn-sm" id="mobileAddContactBtn" aria-label="Nouveau contact">+ Contact</button>
+  </header>
+  <div class="sidebar-backdrop hidden" id="sidebarBackdrop"></div>
+
   <div class="app-shell">
     <!-- Sidebar -->
-    <aside class="sidebar">
+    <aside class="sidebar" id="appSidebar">
       <div class="brand" id="brandHeader">
         <div class="brand-icon" id="brandIcon">@</div>
         <div style="min-width:0;flex:1;">
           <div class="brand-name" id="brandName" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">ContactsHub</div>
           <div class="brand-sub" id="brandTagline" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">CRM & Centralisation Email</div>
         </div>
+        <button type="button" class="mobile-close-btn" id="mobileCloseSidebarBtn" aria-label="Fermer le menu">✕</button>
       </div>
 
       <div style="padding:0 14px 12px;display:flex;flex-direction:column;gap:6px;">
