@@ -486,12 +486,22 @@ def api_add_contact():
     if not email or "@" not in email:
         return jsonify({"error": "Adresse email invalide."}), 400
 
+    phone = (data.get("phone") or "").strip()
+    ws_id = _current_workspace_id()
+    if phone and not data.get("force"):
+        dup = db.find_contact_by_phone(phone, workspace_id=ws_id)
+        if dup and (dup.get("email") or "").lower() != email:
+            return jsonify({
+                "error": f"Doublon téléphone détecté : {phone} appartient déjà à {dup.get('full_name') or dup.get('email')} ({dup.get('email')}).",
+                "duplicate_contact": dup,
+            }), 409
+
     res = db.upsert_contacts(
         records=[data],
         source_type="manual",
         source_name="Ajout manuel",
         extra_tag="",
-        workspace_id=_current_workspace_id(),
+        workspace_id=ws_id,
     )
     return jsonify(res), 201
 
@@ -655,6 +665,38 @@ def api_reclassify():
 @app.route("/api/quality/duplicates", methods=["GET"])
 def api_duplicates():
     return jsonify({"groups": db.find_duplicate_groups()})
+
+
+@app.route("/api/quality/health", methods=["GET"])
+def api_quality_health():
+    return jsonify(db.get_quality_health())
+
+
+@app.route("/api/quality/auto-merge-phones", methods=["POST"])
+def api_quality_auto_merge_phones():
+    res = db.auto_merge_phone_duplicates()
+    _log_audit("quality_auto_merge", f"{res['merged_contacts']} doublon(s) téléphone fusionné(s)")
+    return jsonify(res)
+
+
+@app.route("/api/quality/normalize", methods=["POST"])
+def api_quality_normalize():
+    data = request.get_json(silent=True) or {}
+    cc = (data.get("default_country_code") or "+228").strip()
+    res = db.normalize_contacts_data(default_country_code=cc)
+    _log_audit("quality_normalize", f"{res['updated']} fiche(s) normalisée(s)")
+    return jsonify(res)
+
+
+@app.route("/api/quality/purge", methods=["POST"])
+def api_quality_purge():
+    data = request.get_json(silent=True) or {}
+    mode = (data.get("mode") or "").strip()
+    res = db.purge_contacts_by_quality(mode)
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    _log_audit("quality_purge", f"Nettoyage {mode} : {res['deleted']} contact(s) supprimé(s)")
+    return jsonify(res)
 
 
 @app.route("/api/quality/merge", methods=["POST"])

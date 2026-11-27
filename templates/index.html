@@ -1208,10 +1208,18 @@ Virement</textarea></label>
         <header class="page-header">
           <div>
             <h1>Qualité & Nettoyage de la base</h1>
-            <p class="subtitle">Vérifiez la validité DNS/MX des domaines, isolez les adresses génériques et fusionnez les doublons.</p>
+            <p class="subtitle">Détectez automatiquement les doublons (téléphone, nom, email), normalisez vos fiches, vérifiez les MX et optimisez la santé de votre CRM.</p>
           </div>
-          <button class="btn btn-secondary" id="refreshDuplicatesBtn">↻ Actualiser les doublons</button>
+          <button class="btn btn-secondary" id="refreshDuplicatesBtn">↻ Actualiser l'analyse</button>
         </header>
+
+        <!-- Quality Health KPIs -->
+        <div class="kpi-grid" style="margin-bottom:16px;">
+          <div class="card kpi-card"><div class="kpi-label">Score de Santé</div><div class="kpi-value" id="qualHealthScore">—</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Doublons Téléphone</div><div class="kpi-value" id="qualPhoneDups" style="color:#dc2626;">0</div></div>
+          <div class="card kpi-card"><div class="kpi-label">Doublons Nom / Email</div><div class="kpi-value" id="qualOtherDups" style="color:#d97706;">0</div></div>
+          <div class="card kpi-card"><div class="kpi-label">MX Invalides / Génériques</div><div class="kpi-value" id="qualInvalidMx">0</div></div>
+        </div>
 
         <div class="quality-grid">
           <div class="card quality-card">
@@ -1251,15 +1259,42 @@ Virement</textarea></label>
               <button class="btn btn-secondary" id="showGenericBtn">Voir les emails génériques</button>
             </div>
           </div>
+
+          <div class="card quality-card">
+            <h3>📞 Anti-Doublons Téléphone & Normalisation</h3>
+            <p class="subtitle">Fusionne automatiquement les contacts partageant le même numéro (ex: +228 93 64 18 44 / 93641844) en gardant le meilleur email, et formate proprement tous les numéros, noms et tags.</p>
+            <div class="quality-actions">
+              <button class="btn btn-primary" id="autoMergePhonesBtn">⚡ Fusionner tous les doublons téléphone</button>
+              <button class="btn btn-secondary" id="normalizeBaseBtn">🧹 Normaliser tél., noms & tags</button>
+            </div>
+            <div id="normalizeResultBox" class="info-box hidden"></div>
+          </div>
+
+          <div class="card quality-card">
+            <h3>🗑️ Nettoyage Rapide (Hygiène CRM)</h3>
+            <p class="subtitle">Éliminez en 1 clic les adresses mortes (MX invalides), les boîtes automatiques (noreply@) ou les contacts désinscrits.</p>
+            <div class="quality-actions">
+              <button class="btn btn-secondary" id="purgeInvalidMxBtn">🗑 Purger MX invalides</button>
+              <button class="btn btn-secondary" id="purgeNoreplyBtn">🗑 Purger noreply@</button>
+            </div>
+          </div>
         </div>
 
         <div class="card">
           <div class="browser-header">
             <div>
               <strong>Fusion des doublons intelligents</strong>
-              <span class="subtitle" style="margin-left:8px;">Contacts partageant le même nom ou numéro de téléphone avec des emails différents.</span>
+              <span class="subtitle" style="margin-left:8px;">Détection automatique par numéro de téléphone identique, email similaire ou même nom.</span>
             </div>
-            <span class="badge badge-tag" id="dupCountBadge">0 groupe(s)</span>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <select id="dupKindFilter" class="select" style="width:auto;">
+                <option value="">Tous les doublons</option>
+                <option value="phone">📞 Même téléphone</option>
+                <option value="email_norm">✉️ Email similaire</option>
+                <option value="name">👤 Même nom</option>
+              </select>
+              <span class="badge badge-tag" id="dupCountBadge">0 groupe(s)</span>
+            </div>
           </div>
           <div id="duplicatesContainer" class="duplicates-container">
             <div class="empty-cell">Cliquez sur l'onglet pour rechercher les doublons…</div>

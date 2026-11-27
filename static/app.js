@@ -898,65 +898,162 @@ $("showGenericBtn").addEventListener("click", () => {
   loadContacts();
 });
 
+let cachedDupGroups = [];
+
+async function loadQualityHealth() {
+  try {
+    const h = await api("/api/quality/health");
+    if ($("qualHealthScore")) {
+      $("qualHealthScore").textContent = `${h.health_score ?? 100}%`;
+      $("qualHealthScore").style.color = h.health_score >= 80 ? "#15803d" : h.health_score >= 55 ? "#d97706" : "#dc2626";
+    }
+    if ($("qualPhoneDups")) $("qualPhoneDups").textContent = String(h.phone_duplicates || 0);
+    if ($("qualOtherDups")) $("qualOtherDups").textContent = String((h.name_duplicates || 0) + (h.email_duplicates || 0));
+    if ($("qualInvalidMx")) $("qualInvalidMx").textContent = `${h.invalid_mx || 0} / ${h.generic_emails || 0}`;
+  } catch {}
+}
+
+function renderDuplicateGroups() {
+  const kind = $("dupKindFilter")?.value || "";
+  const groups = kind ? cachedDupGroups.filter((g) => g.kind === kind) : cachedDupGroups;
+  $("dupCountBadge").textContent = `${groups.length} groupe(s)`;
+  if (!groups.length) {
+    $("duplicatesContainer").innerHTML = '<div class="empty-cell">Aucun doublon potentiel détecté dans cette catégorie. Votre base est propre !</div>';
+    return;
+  }
+  $("duplicatesContainer").innerHTML = groups
+    .map(
+      (g, idx) => `
+      <div class="dup-group" data-group="${idx}">
+        <div class="dup-header">
+          <strong>${esc(g.reason)}</strong>
+          <button class="btn btn-primary btn-sm merge-group-btn" data-group="${idx}">Fusionner vers le contact principal</button>
+        </div>
+        <div class="dup-list">
+          ${g.contacts
+            .map(
+              (c, ci) => `
+            <label class="dup-item">
+              <input type="radio" name="primary-${idx}" value="${c.id}" ${ci === 0 ? "checked" : ""} />
+              <strong>${esc(c.email)}</strong>
+              ${ci === 0 ? '<span class="badge badge-st-client">Recommandé</span>' : ""}
+              <span>${esc(c.full_name || "")}</span>
+              <span class="subtitle">${esc(c.phone || "")} ${esc(c.company || "")}</span>
+            </label>
+          `
+            )
+            .join("")}
+        </div>
+      </div>
+    `
+    )
+    .join("");
+
+  $("duplicatesContainer").querySelectorAll(".merge-group-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const gIdx = Number(btn.dataset.group);
+      const group = groups[gIdx];
+      const checked = document.querySelector(`input[name="primary-${gIdx}"]:checked`);
+      const primaryId = Number(checked.value);
+      const secondaryIds = group.contacts.map((c) => c.id).filter((id) => id !== primaryId);
+      await api("/api/quality/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ primary_id: primaryId, secondary_ids: secondaryIds }),
+      });
+      toast("Doublons fusionnés avec succès !", "success");
+      loadDuplicates();
+      refreshAll();
+    });
+  });
+}
+
 async function loadDuplicates() {
+  loadQualityHealth();
   $("duplicatesContainer").innerHTML = '<div class="empty-cell">Recherche des doublons…</div>';
   try {
     const data = await api("/api/quality/duplicates");
-    const groups = data.groups || [];
-    $("dupCountBadge").textContent = `${groups.length} groupe(s)`;
-    if (!groups.length) {
-      $("duplicatesContainer").innerHTML = '<div class="empty-cell">Aucun doublon potentiel détecté. Votre base est propre !</div>';
-      return;
-    }
-    $("duplicatesContainer").innerHTML = groups
-      .map(
-        (g, idx) => `
-        <div class="dup-group" data-group="${idx}">
-          <div class="dup-header">
-            <strong>${esc(g.reason)}</strong>
-            <button class="btn btn-primary btn-sm merge-group-btn" data-group="${idx}">Fusionner vers le contact principal</button>
-          </div>
-          <div class="dup-list">
-            ${g.contacts
-              .map(
-                (c, ci) => `
-              <label class="dup-item">
-                <input type="radio" name="primary-${idx}" value="${c.id}" ${ci === 0 ? "checked" : ""} />
-                <strong>${esc(c.email)}</strong>
-                <span>${esc(c.full_name || "")}</span>
-                <span class="subtitle">${esc(c.phone || "")} ${esc(c.company || "")}</span>
-              </label>
-            `
-              )
-              .join("")}
-          </div>
-        </div>
-      `
-      )
-      .join("");
-
-    $("duplicatesContainer").querySelectorAll(".merge-group-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const gIdx = Number(btn.dataset.group);
-        const group = groups[gIdx];
-        const checked = document.querySelector(`input[name="primary-${gIdx}"]:checked`);
-        const primaryId = Number(checked.value);
-        const secondaryIds = group.contacts.map((c) => c.id).filter((id) => id !== primaryId);
-        await api("/api/quality/merge", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ primary_id: primaryId, secondary_ids: secondaryIds }),
-        });
-        toast("Doublons fusionnés avec succès !", "success");
-        loadDuplicates();
-        refreshAll();
-      });
-    });
+    cachedDupGroups = data.groups || [];
+    renderDuplicateGroups();
   } catch (e) {
     toast(e.message, "error");
   }
 }
-$("refreshDuplicatesBtn").addEventListener("click", loadDuplicates);
+
+$("refreshDuplicatesBtn")?.addEventListener("click", loadDuplicates);
+$("dupKindFilter")?.addEventListener("change", renderDuplicateGroups);
+
+$("autoMergePhonesBtn")?.addEventListener("click", async () => {
+  if (!confirm("Fusionner automatiquement tous les groupes de contacts ayant le même numéro de téléphone ? (Les tags, notes, paiements et historiques seront tous conservés.)")) return;
+  const btn = $("autoMergePhonesBtn");
+  btn.disabled = true;
+  try {
+    const res = await api("/api/quality/auto-merge-phones", { method: "POST" });
+    toast(`${res.merged_groups || 0} groupe(s) fusionné(s) (${res.merged_contacts || 0} doublon(s) supprimé(s)) !`, "success");
+    loadDuplicates();
+    refreshAll();
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("normalizeBaseBtn")?.addEventListener("click", async () => {
+  const btn = $("normalizeBaseBtn");
+  btn.disabled = true;
+  try {
+    const res = await api("/api/quality/normalize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ default_country_code: "+228" }),
+    });
+    const box = $("normalizeResultBox");
+    if (box) {
+      box.classList.remove("hidden");
+      box.textContent = `✅ ${res.updated || 0} fiche(s) normalisée(s) (numéros +228/+, noms, tags dédoublonnés).`;
+    }
+    toast(`${res.updated || 0} fiche(s) normalisée(s) !`, "success");
+    loadDuplicates();
+    refreshAll();
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("purgeInvalidMxBtn")?.addEventListener("click", async () => {
+  if (!confirm("Supprimer définitivement tous les contacts dont le domaine MX est invalide ?")) return;
+  try {
+    const res = await api("/api/quality/purge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "invalid_mx" }),
+    });
+    toast(`${res.deleted || 0} contact(s) MX invalide(s) supprimé(s).`, "success");
+    loadDuplicates();
+    refreshAll();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+$("purgeNoreplyBtn")?.addEventListener("click", async () => {
+  if (!confirm("Supprimer définitivement toutes les adresses automatiques noreply@ / no-reply@ / donotreply@ ?")) return;
+  try {
+    const res = await api("/api/quality/purge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "generic_noreply" }),
+    });
+    toast(`${res.deleted || 0} adresse(s) noreply@ supprimée(s).`, "success");
+    loadDuplicates();
+    refreshAll();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
 
 // ---------------- PREVIEW MODAL ----------------
 

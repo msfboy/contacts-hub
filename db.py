@@ -1230,37 +1230,123 @@ def reclassify_all_contacts() -> int:
         return updated
 
 
+SYNTHETIC_EMAIL_DOMAINS = ("@whatsapp.local", "@booking.local", "@radar.local")
+
+
+def _phone_match_key(phone: str) -> str:
+    d = re.sub(r"\D+", "", str(phone or ""))
+    if d.startswith("00"):
+        d = d[2:]
+    if len(d) < 7:
+        return ""
+    return d[-8:] if len(d) >= 8 else d
+
+
+def _is_synthetic_email(email: str) -> bool:
+    em = (email or "").strip().lower()
+    return any(em.endswith(s) for s in SYNTHETIC_EMAIL_DOMAINS)
+
+
+def _normalize_email_alias(email: str) -> str:
+    em = (email or "").strip().lower()
+    if "@" not in em:
+        return ""
+    local, dom = em.split("@", 1)
+    if dom in ("gmail.com", "googlemail.com"):
+        local = local.split("+", 1)[0].replace(".", "")
+        dom = "gmail.com"
+    return f"{local}@{dom}"
+
+
+def find_contact_by_phone(phone: str, exclude_id: Optional[int] = None, workspace_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    key = _phone_match_key(phone)
+    if not key:
+        return None
+    with get_conn() as conn:
+        if workspace_id is not None:
+            rows = conn.execute(
+                "SELECT id, email, full_name, phone FROM contacts WHERE phone != '' AND COALESCE(workspace_id, 1) = ?",
+                (int(workspace_id),),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT id, email, full_name, phone FROM contacts WHERE phone != ''").fetchall()
+    for r in rows:
+        if exclude_id is not None and int(r["id"]) == int(exclude_id):
+            continue
+        if _phone_match_key(r["phone"]) == key:
+            return dict(r)
+    return None
+
+
+def _primary_rank(c: Dict[str, Any]) -> Tuple[int, int, int, int]:
+    real_email = 0 if _is_synthetic_email(c.get("email") or "") else 1
+    filled = sum(1 for k in ("full_name", "phone", "company", "role", "website", "country", "tags") if (c.get(k) or "").strip())
+    score = int(c.get("lead_score") or 0)
+    return (real_email, score, filled, -int(c.get("id") or 0))
+
+
 def find_duplicate_groups() -> List[Dict[str, Any]]:
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute("SELECT * FROM contacts ORDER BY id ASC").fetchall()]
 
-    by_name: Dict[str, List[Dict[str, Any]]] = {}
     by_phone: Dict[str, List[Dict[str, Any]]] = {}
+    by_email_norm: Dict[str, List[Dict[str, Any]]] = {}
+    by_name: Dict[str, List[Dict[str, Any]]] = {}
 
     for r in rows:
-        name_key = re.sub(r"\s+", " ", (r["full_name"] or "").strip().lower())
-        if len(name_key) >= 4:
+        pkey = _phone_match_key(r.get("phone") or "")
+        if pkey:
+            by_phone.setdefault(pkey, []).append(r)
+
+        ekey = _normalize_email_alias(r.get("email") or "")
+        if ekey and not _is_synthetic_email(r.get("email") or ""):
+            by_email_norm.setdefault(ekey, []).append(r)
+
+        name_key = re.sub(r"\s+", " ", (r.get("full_name") or "").strip().lower())
+        if len(name_key) >= 4 and not name_key.startswith("+"):
             by_name.setdefault(name_key, []).append(r)
-        phone_digits = re.sub(r"\D+", "", r["phone"] or "")
-        if len(phone_digits) >= 7:
-            by_phone.setdefault(phone_digits[-8:], []).append(r)
 
     groups: List[Dict[str, Any]] = []
     seen_sets = set()
 
-    for key, items in by_name.items():
+    # 1. Phone duplicates first (highest priority)
+    for _, items in by_phone.items():
         if len(items) > 1:
             sig = tuple(sorted(i["id"] for i in items))
             if sig not in seen_sets:
                 seen_sets.add(sig)
-                groups.append({"reason": f"Même nom : {items[0]['full_name']}", "contacts": items})
+                ordered = sorted(items, key=_primary_rank, reverse=True)
+                groups.append({
+                    "kind": "phone",
+                    "reason": f"📞 Même téléphone : {ordered[0]['phone']}",
+                    "contacts": ordered,
+                })
 
-    for key, items in by_phone.items():
+    # 2. Normalized email aliases (e.g., Gmail dot/plus variants)
+    for ekey, items in by_email_norm.items():
         if len(items) > 1:
             sig = tuple(sorted(i["id"] for i in items))
             if sig not in seen_sets:
                 seen_sets.add(sig)
-                groups.append({"reason": f"Même téléphone : {items[0]['phone']}", "contacts": items})
+                ordered = sorted(items, key=_primary_rank, reverse=True)
+                groups.append({
+                    "kind": "email_norm",
+                    "reason": f"✉️ Email similaire : {ekey}",
+                    "contacts": ordered,
+                })
+
+    # 3. Same full name
+    for _, items in by_name.items():
+        if len(items) > 1:
+            sig = tuple(sorted(i["id"] for i in items))
+            if sig not in seen_sets:
+                seen_sets.add(sig)
+                ordered = sorted(items, key=_primary_rank, reverse=True)
+                groups.append({
+                    "kind": "name",
+                    "reason": f"👤 Même nom : {ordered[0]['full_name']}",
+                    "contacts": ordered,
+                })
 
     return groups
 
@@ -1289,12 +1375,17 @@ def merge_contacts(primary_id: int, secondary_ids: List[int]) -> Dict[str, Any]:
         alt_emails = []
         tags = primary["tags"]
         notes = primary["notes"]
+        best_score = int(primary.get("lead_score") or 0)
+        best_deal = float(primary.get("deal_value") or 0)
+
         for o in others:
-            for field in ("first_name", "last_name", "full_name", "phone", "company", "role"):
-                if not primary[field] and o[field]:
+            for field in ("first_name", "last_name", "full_name", "phone", "company", "role", "website", "country", "industry"):
+                if not (primary.get(field) or "").strip() and (o.get(field) or "").strip():
                     primary[field] = o[field]
+            best_score = max(best_score, int(o.get("lead_score") or 0))
+            best_deal = max(best_deal, float(o.get("deal_value") or 0))
             tags = merge_tags(tags, o["tags"])
-            if o["email"] and o["email"] != primary["email"]:
+            if o["email"] and o["email"] != primary["email"] and not _is_synthetic_email(o["email"]):
                 alt_emails.append(o["email"])
             if o["notes"] and o["notes"] not in notes:
                 notes = (notes + "\n" + o["notes"]).strip()
@@ -1309,18 +1400,162 @@ def merge_contacts(primary_id: int, secondary_ids: List[int]) -> Dict[str, Any]:
             """
             UPDATE contacts SET
                 first_name = ?, last_name = ?, full_name = ?, phone = ?,
-                company = ?, role = ?, tags = ?, notes = ?, updated_at = ?
+                company = ?, role = ?, website = ?, country = ?, industry = ?,
+                lead_score = ?, deal_value = ?, tags = ?, notes = ?, updated_at = ?
             WHERE id = ?
             """,
             (
                 primary["first_name"], primary["last_name"], primary["full_name"],
                 primary["phone"], primary["company"], primary["role"],
-                tags, notes, now, primary_id,
+                primary.get("website") or "", primary.get("country") or "", primary.get("industry") or "",
+                best_score, best_deal, tags, notes, now, primary_id,
             ),
         )
+
+        # Re-link all child records so no history/payments/messages are orphaned
+        for tbl in (
+            "contact_activities", "contact_tasks", "email_logs", "sequence_enrollments",
+            "form_submissions", "student_payments", "appointments",
+            "whatsapp_contacts", "whatsapp_messages", "wa_broadcast_recipients", "click_events",
+        ):
+            try:
+                conn.execute(
+                    f"UPDATE {tbl} SET contact_id = ? WHERE contact_id IN ({placeholders})",
+                    [primary_id, *secondary_ids],
+                )
+            except sqlite3.OperationalError:
+                pass
+
         conn.execute(f"DELETE FROM contacts WHERE id IN ({placeholders})", secondary_ids)
 
     return {"merged": len(others), "primary_id": primary_id}
+
+
+def auto_merge_phone_duplicates() -> Dict[str, Any]:
+    groups = [g for g in find_duplicate_groups() if g.get("kind") == "phone"]
+    merged_groups = 0
+    merged_contacts = 0
+    for g in groups:
+        cs = g["contacts"]
+        if len(cs) < 2:
+            continue
+        primary_id = cs[0]["id"]
+        sec_ids = [c["id"] for c in cs[1:]]
+        try:
+            res = merge_contacts(primary_id, sec_ids)
+            if res.get("merged", 0) > 0:
+                merged_groups += 1
+                merged_contacts += res["merged"]
+        except Exception:
+            continue
+    return {"ok": True, "merged_groups": merged_groups, "merged_contacts": merged_contacts}
+
+
+def get_quality_health() -> Dict[str, Any]:
+    groups = find_duplicate_groups()
+    phone_dups = sum(1 for g in groups if g["kind"] == "phone")
+    name_dups = sum(1 for g in groups if g["kind"] == "name")
+    email_dups = sum(1 for g in groups if g["kind"] == "email_norm")
+
+    with get_conn() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+        invalid_mx = conn.execute("SELECT COUNT(*) FROM contacts WHERE mx_status = 'invalid'").fetchone()[0]
+        generic_cnt = conn.execute("SELECT COUNT(*) FROM contacts WHERE email_type = 'generic'").fetchone()[0]
+        missing_phone = conn.execute("SELECT COUNT(*) FROM contacts WHERE TRIM(COALESCE(phone, '')) = ''").fetchone()[0]
+        missing_name = conn.execute("SELECT COUNT(*) FROM contacts WHERE TRIM(COALESCE(full_name, '')) = ''").fetchone()[0]
+        synth_emails = conn.execute(
+            "SELECT COUNT(*) FROM contacts WHERE email LIKE '%@whatsapp.local' OR email LIKE '%@booking.local' OR email LIKE '%@radar.local'"
+        ).fetchone()[0]
+
+    if total == 0:
+        health_score = 100
+    else:
+        penalty = (
+            min(30, phone_dups * 5)
+            + min(15, name_dups * 2)
+            + min(25, int((invalid_mx / max(1, total)) * 100))
+            + min(15, int((generic_cnt / max(1, total)) * 40))
+            + min(15, int((missing_name / max(1, total)) * 30))
+        )
+        health_score = max(0, min(100, 100 - penalty))
+
+    return {
+        "total": total,
+        "health_score": health_score,
+        "phone_duplicates": phone_dups,
+        "name_duplicates": name_dups,
+        "email_duplicates": email_dups,
+        "invalid_mx": invalid_mx,
+        "generic_emails": generic_cnt,
+        "synthetic_emails": synth_emails,
+        "missing_phone": missing_phone,
+        "missing_name": missing_name,
+    }
+
+
+def normalize_contacts_data(default_country_code: str = "+228") -> Dict[str, Any]:
+    now = datetime.now().isoformat(timespec="seconds")
+    updated = 0
+    cc = re.sub(r"[^\d+]", "", default_country_code or "+228")
+    if cc and not cc.startswith("+"):
+        cc = "+" + cc
+
+    with get_conn() as conn:
+        rows = [dict(r) for r in conn.execute("SELECT id, first_name, last_name, full_name, phone, tags FROM contacts").fetchall()]
+        updates = []
+        for r in rows:
+            fn = re.sub(r"\s+", " ", (r["first_name"] or "").strip())
+            ln = re.sub(r"\s+", " ", (r["last_name"] or "").strip())
+            full = re.sub(r"\s+", " ", (r["full_name"] or "").strip())
+            if full.isupper() and len(full) > 3:
+                full = full.title()
+            if fn.isupper() and len(fn) > 2:
+                fn = fn.title()
+            if ln.isupper() and len(ln) > 2:
+                ln = ln.title()
+
+            raw_phone = (r["phone"] or "").strip()
+            norm_phone = raw_phone
+            if raw_phone:
+                digits = re.sub(r"\D+", "", raw_phone)
+                if digits.startswith("00"):
+                    digits = digits[2:]
+                if len(digits) == 8 and cc:
+                    norm_phone = f"{cc}{digits}"
+                elif len(digits) >= 7:
+                    norm_phone = f"+{digits}"
+
+            norm_tags = merge_tags(r["tags"] or "", "")
+
+            if (fn, ln, full, norm_phone, norm_tags) != (
+                r["first_name"] or "", r["last_name"] or "", r["full_name"] or "",
+                raw_phone, r["tags"] or "",
+            ):
+                updates.append((fn, ln, full, norm_phone, norm_tags, now, r["id"]))
+                updated += 1
+
+        if updates:
+            conn.executemany(
+                "UPDATE contacts SET first_name = ?, last_name = ?, full_name = ?, phone = ?, tags = ?, updated_at = ? WHERE id = ?",
+                updates,
+            )
+    return {"ok": True, "updated": updated}
+
+
+def purge_contacts_by_quality(mode: str) -> Dict[str, Any]:
+    with get_conn() as conn:
+        if mode == "invalid_mx":
+            cur = conn.execute("DELETE FROM contacts WHERE mx_status = 'invalid'")
+            return {"ok": True, "deleted": cur.rowcount, "mode": mode}
+        if mode == "generic_noreply":
+            cur = conn.execute(
+                "DELETE FROM contacts WHERE email_type = 'generic' AND (LOWER(email) LIKE 'noreply@%' OR LOWER(email) LIKE 'no-reply@%' OR LOWER(email) LIKE 'donotreply@%')"
+            )
+            return {"ok": True, "deleted": cur.rowcount, "mode": mode}
+        if mode == "unsubscribed":
+            cur = conn.execute("DELETE FROM contacts WHERE status = 'unsubscribed'")
+            return {"ok": True, "deleted": cur.rowcount, "mode": mode}
+    return {"ok": False, "error": "Mode de nettoyage inconnu.", "deleted": 0}
 
 
 def get_stats(workspace_id: Optional[int] = None) -> Dict[str, Any]:
