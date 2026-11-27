@@ -494,10 +494,13 @@ async function loadDashboard() {
 
 $("dashRefreshBtn")?.addEventListener("click", () => { loadDashboard(); loadExecutiveBrief(); });
 
-// ---------------- #1 PRESIDENTIAL EXECUTIVE BRIEF ----------------
+// ---------------- #1 PRESIDENTIAL EXECUTIVE BRIEF (+ VOCAL DEBRIEFING) ----------------
+let _lastExecBrief = null;
+
 async function loadExecutiveBrief() {
   try {
     const b = await api("/api/executive/brief");
+    _lastExecBrief = b;
     const k = b.kpis || {};
     if ($("execTargetInput") && k.monthly_target !== undefined) $("execTargetInput").value = String(Math.round(k.monthly_target));
     if ($("execTargetBar")) $("execTargetBar").style.width = `${Math.min(100, Number(k.target_pct || 0))}%`;
@@ -510,6 +513,66 @@ async function loadExecutiveBrief() {
     }
   } catch {}
 }
+
+function _stripEmojisForSpeech(txt) {
+  return String(txt || "")
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function toggleSpeakExecutiveBrief() {
+  const btn = $("speakExecBriefBtn");
+  if (!("speechSynthesis" in window)) {
+    toast("La synthèse vocale n'est pas supportée par ce navigateur.", "error");
+    return;
+  }
+  if (window.speechSynthesis.speaking) {
+    window.speechSynthesis.cancel();
+    if (btn) btn.textContent = "🔊 Écouter le Débriefing";
+    return;
+  }
+  if (!_lastExecBrief) {
+    await loadExecutiveBrief();
+  }
+  const b = _lastExecBrief;
+  if (!b) {
+    toast("Impossible de charger le briefing exécutif.", "error");
+    return;
+  }
+  const k = b.kpis || {};
+  const wsName = b.workspace?.name || "votre entreprise";
+  const cur = (b.currency || "FCFA") === "FCFA" ? "francs CFA" : (b.currency || "");
+  const lines = [
+    `Bonjour. Voici votre débriefing exécutif du jour pour ${wsName}.`,
+    `Chiffre d'affaires encaissé ce mois-ci : ${Math.round(k.month_revenue || 0)} ${cur}, soit ${k.target_pct || 0} pour cent de votre objectif mensuel de ${Math.round(k.monthly_target || 0)} ${cur}.`,
+    `Vous comptez ${k.total_contacts || 0} contacts au total, dont ${k.clients_count || 0} clients actifs, avec un taux de conversion de ${k.conversion_rate || 0} pour cent.`,
+  ];
+  if (Number(k.unpaid_total || 0) > 0) {
+    lines.push(`Attention : ${k.unpaid_count || 0} dossier en attente représentent ${Math.round(k.unpaid_total)} ${cur} à recouvrer.`);
+  }
+  const recs = (b.recommendations || []).slice(0, 4).map(_stripEmojisForSpeech).filter(Boolean);
+  if (recs.length) {
+    lines.push("Voici vos priorités stratégiques du jour.");
+    recs.forEach((r) => lines.push(r));
+  }
+  const fullText = lines.join(" ");
+  const utter = new SpeechSynthesisUtterance(fullText);
+  utter.lang = "fr-FR";
+  utter.rate = 1.02;
+  utter.pitch = 1.0;
+  const voices = window.speechSynthesis.getVoices() || [];
+  const frVoice = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith("fr"));
+  if (frVoice) utter.voice = frVoice;
+  utter.onstart = () => { if (btn) btn.textContent = "⏹️ Arrêter le Débriefing"; };
+  utter.onend = () => { if (btn) btn.textContent = "🔊 Écouter le Débriefing"; };
+  utter.onerror = () => { if (btn) btn.textContent = "🔊 Écouter le Débriefing"; };
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utter);
+  toast("🔊 Lecture du débriefing exécutif en cours…", "info");
+}
+
+$("speakExecBriefBtn")?.addEventListener("click", toggleSpeakExecutiveBrief);
 $("saveExecTargetBtn")?.addEventListener("click", async () => {
   try {
     await api("/api/executive/target", {
