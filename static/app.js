@@ -5826,3 +5826,14 @@ $("saveVipEventBtn")?.addEventListener("click", async () => {
     toast(e.message, "error");
   }
 });
+
+$("remindPendingVipBtn")?.addEventListener("click", async () => {
+  if (!_currentVipEventId) return;
+  if (!confirm("Envoyer un rappel WhatsApp à toutes les réservations VIP en attente de paiement ?")) return;
+  try {
+    const res = await api(`/api/events/${_currentVipEventId}/remind-pending`, { method: "POST" });
+    toast(`Relance terminée : ${res.sent || 0} envoyé(s), ${res.failed || 0} échec(s).`, "success");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});

@@ -26,7 +26,7 @@ def ensure_default_event(workspace_id: int = 1) -> Dict[str, Any]:
         if row:
             return _hydrate_event(dict(row))
 
-        default_date = (datetime.now() + timedelta(days=21)).strftime("%Y-%m-%d")
+        default_date = "2026-12-12"
         speakers = [
             {
                 "name": "Mawougna Yao Ossentini",
@@ -47,8 +47,8 @@ def ensure_default_event(workspace_id: int = 1) -> Dict[str, Any]:
         perks = [
             "🔑 7 jours d'accès GRATUIT à la plateforme complète ContactsHub SaaS (clé activée automatiquement)",
             "👕 1 T-Shirt Officiel VIP offert (votre taille réservée à l'inscription)",
-            "🎤 Workshop exclusif animé par 3 Experts + Démonstration Live en conditions réelles",
-            "🤝 Networking VIP avec dirigeants, entrepreneurs et décideurs de Lomé",
+            "🎤 Workshop exclusif animé par 3 Experts (08h30 – 11h30) + Démo Live",
+            "🥂 Collation & Réseautage VIP (11h30 – 12h00) avec dirigeants et entrepreneurs de Lomé",
         ]
         now = _now()
         cur = conn.execute(
@@ -64,7 +64,7 @@ def ensure_default_event(workspace_id: int = 1) -> Dict[str, Any]:
                 "Lomé Digital & AI Summit — Présentation Officielle",
                 "Le Workshop exclusif qui transforme votre gestion client, vos ventes WhatsApp et vos encaissements grâce à l'IA.",
                 default_date,
-                "09:00",
+                "08h30 – 11h30 (+ 30 min Collation & Réseautage)",
                 "Carrefour Adroukpapé, Avedji Limosine — Lomé, Togo",
                 10000.0,
                 "FCFA",
@@ -361,3 +361,44 @@ def list_registrations(event_id: int) -> List[Dict[str, Any]]:
             (event_id,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def remind_pending_registrations(event_id: int, public_base_url: str = "") -> Dict[str, Any]:
+    """Send automated WhatsApp payment reminders to all pending (unpaid) VIP event reservations."""
+    with db.get_conn() as conn:
+        ev_row = conn.execute("SELECT * FROM vip_events WHERE id = ?", (event_id,)).fetchone()
+        if not ev_row:
+            return {"ok": False, "error": "Événement introuvable."}
+        ev = dict(ev_row)
+        pending = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM event_registrations WHERE event_id = ? AND payment_status != 'paid' AND phone != ''",
+                (event_id,),
+            ).fetchall()
+        ]
+    if not pending:
+        return {"ok": True, "sent": 0, "failed": 0, "message": "Aucune réservation en attente de paiement."}
+
+    price_str = f"{int(round(float(ev.get('price') or 10000))):,}".replace(",", " ")
+    sent = 0
+    failed = 0
+    for r in pending:
+        first = (r["full_name"] or "").split(" ")[0] or "Cher invité"
+        ticket_url = f"{public_base_url.rstrip('/')}/event/ticket/{r['ticket_code']}" if public_base_url else ""
+        msg = (
+            f"Bonjour {first} 👋\n"
+            f"Votre place VIP pour *{ev['title']}* ({ev.get('event_date')} · {ev.get('event_time')}) "
+            f"ainsi que votre *T-Shirt Taille {r['tshirt_size']}* sont pré-réservés !\n\n"
+            f"• Billet N° : *{r['ticket_code']}*\n"
+            f"• Participation : *{price_str} {ev.get('currency') or 'FCFA'}* (7 jours SaaS gratuits + T-Shirt + Workshop + Collation)\n"
+            + (f"• Votre billet QR Code : {ticket_url}\n\n" if ticket_url else "\n")
+            + "Validez votre règlement (TMoney / Flooz) dès maintenant pour recevoir automatiquement votre clé d'accès 7 jours gratuits ! 🚀"
+        )
+        res = wa_client.bridge_post("/send", {"phone": r["phone"], "text": msg}, timeout=10.0)
+        if res.get("ok"):
+            sent += 1
+        else:
+            failed += 1
+    return {"ok": True, "sent": sent, "failed": failed, "total_pending": len(pending)}
+

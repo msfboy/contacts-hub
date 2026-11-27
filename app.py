@@ -4121,5 +4121,13 @@ def api_event_confirm_payment(reg_id: int):
     return jsonify(res)
 
 
+@app.route("/api/events/<int:event_id>/remind-pending", methods=["POST"])
+def api_event_remind_pending(event_id: int):
+    res = events_hub.remind_pending_registrations(event_id, public_base_url=_public_base_url(_active_ws_id()))
+    if not res.get("ok"):
+        return jsonify(res), 400
+    return jsonify(res)
+
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5050, debug=False)

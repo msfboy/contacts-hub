@@ -1305,7 +1305,10 @@ Virement</textarea></label>
             <label class="field"><span>Capacité (places)</span><input type="number" id="evtCapInput" class="input" value="100" /></label>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
-            <button class="btn btn-primary btn-sm" id="saveVipEventBtn">💾 Enregistrer l'événement</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button class="btn btn-primary btn-sm" id="saveVipEventBtn">💾 Enregistrer l'événement</button>
+              <button class="btn btn-secondary btn-sm" id="remindPendingVipBtn">⚡ Relancer impayés (WhatsApp)</button>
+            </div>
             <div id="evtStatsBar" class="subtitle" style="font-size:12.5px;font-weight:600;"></div>
           </div>
           <div class="table-wrap" style="max-height:280px;overflow:auto;">
