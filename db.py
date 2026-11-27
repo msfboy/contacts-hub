@@ -181,6 +181,20 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def get_app_setting(key: str, default: str = "") -> str:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+
+def set_app_setting(key: str, value: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)),
+        )
+
+
 def create_hot_backup(dest_path: str) -> str:
     """Create a transactionally consistent SQLite hot backup (safe under WAL mode)."""
     os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
@@ -238,6 +252,7 @@ def init_db() -> None:
             ("company_desc", "TEXT DEFAULT ''"),
             ("deal_value", "REAL DEFAULT 0"),
             ("workspace_id", "INTEGER DEFAULT 1"),
+            ("assigned_to", "TEXT DEFAULT ''"),
         ]
         for col, ddl in migrations:
             if col not in existing_cols:
@@ -864,6 +879,35 @@ def init_db() -> None:
             )
             """
         )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS quotes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                quote_num TEXT UNIQUE NOT NULL,
+                doc_type TEXT DEFAULT 'devis',
+                contact_id INTEGER,
+                client_name TEXT NOT NULL,
+                client_company TEXT DEFAULT '',
+                client_phone TEXT DEFAULT '',
+                client_email TEXT DEFAULT '',
+                title TEXT NOT NULL,
+                items_json TEXT DEFAULT '[]',
+                subtotal REAL DEFAULT 0,
+                discount REAL DEFAULT 0,
+                tax_rate REAL DEFAULT 0,
+                total_amount REAL DEFAULT 0,
+                currency TEXT DEFAULT 'FCFA',
+                valid_until TEXT DEFAULT '',
+                status TEXT DEFAULT 'sent',
+                notes TEXT DEFAULT '',
+                payment_id INTEGER,
+                workspace_id INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_quotes_ws ON quotes(workspace_id)")
 
         # Clean up legacy unresolved WhatsApp @lid ghost records (fake 14-15 digit numbers)
         conn.execute("DELETE FROM whatsapp_messages WHERE jid LIKE '%@lid' OR LENGTH(REPLACE(phone, '+', '')) >= 14")

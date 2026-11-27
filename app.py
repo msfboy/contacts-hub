@@ -32,6 +32,7 @@ import net_guard
 import parsers
 import payments_hub
 import prospecting
+import quotes_hub
 import services
 import social_hub
 import wa_broadcast
@@ -135,12 +136,14 @@ PUBLIC_PREFIXES = (
     "/unsubscribe/",
     "/api/webhooks/contacts",
     "/api/webhooks/payment",
+    "/api/webhooks/gateway/",
     "/api/wa-bridge/webhook",
     "/webhooks/facebook",
     "/webhooks/tiktok",
     "/rdv",
     "/api/booking/slots",
     "/receipt/",
+    "/quote/",
     "/f/",
     "/l/",
 )
@@ -148,6 +151,7 @@ PUBLIC_PREFIXES = (
 CSRF_EXEMPT_PREFIXES = (
     "/api/webhooks/contacts",
     "/api/webhooks/payment",
+    "/api/webhooks/gateway/",
     "/api/wa-bridge/webhook",
     "/webhooks/facebook",
     "/webhooks/tiktok",
@@ -3751,6 +3755,144 @@ def api_webhook_payment():
             return jsonify({"ok": True, "duplicate": True, "receipt_num": pay_res.get("receipt_num")}), 200
     _log_audit("payment_received", f"Client {em} ({amount} {currency})")
     return jsonify({"ok": True, "client": em}), 201
+
+
+# ---------------- PACK 2: B2B QUOTES, PAYMENT GATEWAY & SALES LEADERBOARD ----------------
+
+@app.route("/api/quotes", methods=["GET"])
+def api_list_quotes():
+    ws_id = _active_ws_id()
+    q = (request.args.get("q") or "").strip()
+    return jsonify(quotes_hub.list_quotes(workspace_id=ws_id, search=q))
+
+
+@app.route("/api/quotes", methods=["POST"])
+def api_create_quote():
+    data = request.get_json(force=True, silent=True) or {}
+    data["workspace_id"] = _active_ws_id()
+    res = quotes_hub.create_quote(data)
+    if not res.get("ok"):
+        return jsonify(res), 400
+    _log_audit("quote_created", f"{res.get('quote_num')} ({res.get('total_amount')})")
+    return jsonify(res), 201
+
+
+@app.route("/quote/<int:qid>", methods=["GET"])
+def public_quote_view(qid: int):
+    data = quotes_hub.get_quote_data(qid)
+    if not data:
+        return "Devis introuvable", 404
+    return render_template(
+        "quote.html",
+        quote=data["quote"],
+        workspace=data["workspace"],
+        online_payment_url=data["online_payment_url"],
+    )
+
+
+@app.route("/api/quotes/<int:qid>/convert", methods=["POST"])
+def api_convert_quote(qid: int):
+    data = request.get_json(force=True, silent=True) or {}
+    res = quotes_hub.convert_quote_to_payment(
+        qid=qid,
+        payment_method=(data.get("payment_method") or "Virement").strip(),
+        payment_ref=(data.get("payment_ref") or "").strip(),
+    )
+    if not res.get("ok"):
+        return jsonify(res), 400
+    _log_audit("quote_converted", f"Quote #{qid} -> {res.get('receipt_num')}")
+    return jsonify(res)
+
+
+@app.route("/api/quotes/<int:qid>/send-wa", methods=["POST"])
+def api_send_quote_wa(qid: int):
+    base = _public_base_url(_active_ws_id())
+    quote_url = f"{base}/quote/{qid}"
+    res = quotes_hub.send_quote_via_whatsapp(qid, quote_url=quote_url)
+    if not res.get("ok"):
+        return jsonify(res), 400
+    return jsonify(res)
+
+
+@app.route("/api/quotes/<int:qid>", methods=["DELETE"])
+def api_delete_quote(qid: int):
+    return jsonify(quotes_hub.delete_quote(qid))
+
+
+@app.route("/api/payments/gateway", methods=["GET"])
+def api_get_payment_gateway():
+    ws_id = _active_ws_id()
+    cfg = payments_hub.get_gateway_config(ws_id, include_secrets=False)
+    base = _public_base_url(ws_id)
+    cfg["webhook_url"] = f"{base}/api/webhooks/gateway/{cfg.get('provider') or 'fedapay'}?ws={ws_id}"
+    return jsonify(cfg)
+
+
+@app.route("/api/payments/gateway", methods=["POST"])
+def api_save_payment_gateway():
+    ws_id = _active_ws_id()
+    data = request.get_json(force=True, silent=True) or {}
+    cfg = payments_hub.save_gateway_config(ws_id, data)
+    base = _public_base_url(ws_id)
+    cfg["webhook_url"] = f"{base}/api/webhooks/gateway/{cfg.get('provider') or 'fedapay'}?ws={ws_id}"
+    _log_audit("gateway_updated", f"Provider={cfg.get('provider')} enabled={cfg.get('enabled')}")
+    return jsonify(cfg)
+
+
+@app.route("/api/webhooks/gateway/<provider>", methods=["POST"])
+def api_gateway_webhook(provider: str):
+    if not _check_rate_limit("gw_webhook", max_hits=60, window_sec=60):
+        return jsonify({"error": "Trop de requêtes webhook."}), 429
+    raw_body = request.get_data() or b""
+    payload = request.get_json(force=True, silent=True) or {}
+    sig = (
+        request.headers.get("X-Webhook-Secret")
+        or request.headers.get("X-FedaPay-Signature")
+        or request.headers.get("X-CinetPay-Signature")
+        or request.headers.get("Stripe-Signature")
+        or request.headers.get("X-Signature")
+        or request.args.get("secret")
+        or ""
+    )
+    try:
+        ws_id = int(request.args.get("ws") or 1)
+    except Exception:
+        ws_id = 1
+    res = payments_hub.process_gateway_webhook(
+        provider=provider,
+        payload=payload,
+        raw_body=raw_body,
+        signature=sig,
+        workspace_id=ws_id,
+    )
+    if not res.get("ok"):
+        code = int(res.get("status") or 400)
+        if res.get("duplicate"):
+            return jsonify({"ok": True, "duplicate": True, "receipt_num": res.get("receipt_num")}), 200
+        return jsonify(res), code
+    return jsonify(res), 201 if not res.get("ignored") else 200
+
+
+@app.route("/api/crm/leaderboard", methods=["GET"])
+def api_crm_leaderboard():
+    return jsonify(executive_brief.compute_sales_leaderboard(_active_ws_id()))
+
+
+@app.route("/api/contacts/<int:cid>/assign", methods=["POST"])
+def api_assign_contact(cid: int):
+    data = request.get_json(force=True, silent=True) or {}
+    rep = (data.get("assigned_to") or "").strip()[:80]
+    now = datetime.now().isoformat(timespec="seconds")
+    with db.get_conn() as conn:
+        conn.execute(
+            "UPDATE contacts SET assigned_to = ?, updated_at = ? WHERE id = ?",
+            (rep, now, cid),
+        )
+        conn.execute(
+            "INSERT INTO contact_activities (contact_id, kind, content, created_at) VALUES (?, 'note', ?, ?)",
+            (cid, f"👤 Contact assigné à : {rep or 'Non assigné'}", now),
+        )
+    return jsonify({"ok": True, "assigned_to": rep})
 
 
 if __name__ == "__main__":

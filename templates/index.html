@@ -1125,6 +1125,92 @@
             </table>
           </div>
         </div>
+
+        <!-- #4 B2B Quotes & Signed Proforma Invoices -->
+        <div class="card" style="padding:18px;margin-top:16px;border-left:4px solid #1d4ed8;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <div>
+              <h3 style="margin:0;">📄 Devis &amp; Factures Proforma B2B Signés</h3>
+              <p class="subtitle" style="margin:2px 0 0;">Créez des offres chiffrées avec cachet &amp; signature, envoyez-les sur WhatsApp et convertissez-les en paiement + reçu en 1 clic.</p>
+            </div>
+            <span class="badge badge-st-contacted" id="quotesSummaryBadge">0 devis</span>
+          </div>
+          <div class="form-grid" style="margin-bottom:12px;">
+            <label class="field">
+              <span>Type de document</span>
+              <select id="qDocType" class="select">
+                <option value="devis">Devis Commercial</option>
+                <option value="proforma">Facture Proforma</option>
+              </select>
+            </label>
+            <label class="field"><span>Client / Contact *</span><input type="text" id="qClientName" class="input" placeholder="Ex: M. Kodjo Agbé" /></label>
+            <label class="field"><span>Entreprise / Organisation</span><input type="text" id="qClientCompany" class="input" placeholder="Ex: Ecobank Togo" /></label>
+            <label class="field"><span>Téléphone WhatsApp</span><input type="text" id="qClientPhone" class="input" placeholder="+228 90 00 00 00" /></label>
+            <label class="field"><span>Email client</span><input type="email" id="qClientEmail" class="input" placeholder="client@entreprise.com" /></label>
+            <label class="field"><span>Objet du devis *</span><input type="text" id="qTitle" class="input" placeholder="Ex: Formation Anglais Business (10 cadres)" /></label>
+            <label class="field full">
+              <span>Lignes du devis (1 par ligne au format : <code>Désignation | Qté | Prix unitaire</code>) *</span>
+              <textarea id="qItemsText" class="input" rows="3" placeholder="Formation Anglais Business (24h) | 10 | 35000&#10;Supports pédagogiques &amp; Certificats | 10 | 5000"></textarea>
+            </label>
+            <label class="field"><span>Remise (FCFA)</span><input type="number" id="qDiscount" class="input" value="0" min="0" step="500" /></label>
+            <label class="field"><span>TVA (%)</span><input type="number" id="qTaxRate" class="input" value="0" min="0" max="50" step="1" /></label>
+            <label class="field"><span>Valable jusqu'au</span><input type="date" id="qValidUntil" class="input" /></label>
+            <label class="field"><span>Conditions / Notes</span><input type="text" id="qNotes" class="input" placeholder="Ex: 50% à la commande, 50% à la livraison" /></label>
+          </div>
+          <div style="margin-bottom:14px;">
+            <button class="btn btn-primary" id="createQuoteBtn">📄 Générer le Devis / Proforma PDF</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Réf</th><th>Client</th><th>Objet</th><th>Total TTC</th><th>Statut</th><th class="col-actions">Actions</th></tr></thead>
+              <tbody id="quotesTbody"><tr><td colspan="6" class="empty-cell">Aucun devis créé pour le moment.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- #5 Online Payment Gateway (Mobile Money / Card) -->
+        <div class="card" style="padding:18px;margin-top:16px;border-left:4px solid #16a34a;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <div>
+              <h3 style="margin:0;">💳 Encaissement Mobile Money &amp; Carte en Ligne Automatique</h3>
+              <p class="subtitle" style="margin:2px 0 0;">Connectez FedaPay, CinetPay, PayGate, Stripe ou votre lien de paiement : vos devis et relances WhatsApp incluent le bouton « Payer en ligne » et chaque paiement crée son reçu automatiquement via webhook.</p>
+            </div>
+            <label style="display:flex;align-items:center;gap:6px;font-weight:700;cursor:pointer;">
+              <input type="checkbox" id="gwEnabledChk" />
+              <span>Activer le paiement en ligne</span>
+            </label>
+          </div>
+          <div class="form-grid">
+            <label class="field">
+              <span>Passerelle</span>
+              <select id="gwProviderSel" class="select">
+                <option value="fedapay">FedaPay (TMoney / Flooz / Carte)</option>
+                <option value="cinetpay">CinetPay (Afrique de l'Ouest &amp; Centrale)</option>
+                <option value="paygate">PayGate Global (Togo TMoney/Flooz)</option>
+                <option value="stripe">Stripe (Carte Internationale)</option>
+                <option value="custom_link">Lien de paiement personnalisé</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Lien / Modèle de paiement (variables : <code>{amount}</code>, <code>{ref}</code>, <code>{name}</code>)</span>
+              <input type="url" id="gwCheckoutTpl" class="input" placeholder="https://me.fedapay.com/mon-academie?amount={amount}&ref={ref}" />
+            </label>
+            <label class="field"><span>Clé publique (optionnelle)</span><input type="text" id="gwPublicKey" class="input" placeholder="pk_live_..." /></label>
+            <label class="field"><span>Clé secrète API (chiffrée)</span><input type="password" id="gwSecretKey" class="input" placeholder="Laissez vide pour conserver l'actuelle" /></label>
+            <label class="field"><span>Secret Webhook (header X-Webhook-Secret)</span><input type="password" id="gwWebhookSecret" class="input" placeholder="Auto-généré si vide" /></label>
+            <label class="field">
+              <span>URL Webhook d'auto-réconciliation</span>
+              <div style="display:flex;gap:6px;">
+                <input type="text" id="gwWebhookUrl" class="input" readonly />
+                <button type="button" class="btn btn-secondary btn-sm" id="copyGwWebhookBtn">📋</button>
+              </div>
+            </label>
+          </div>
+          <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
+            <button class="btn btn-primary btn-sm" id="saveGwCfgBtn">💾 Enregistrer la passerelle</button>
+            <span class="subtitle" id="gwStatusHint" style="font-size:12px;"></span>
+          </div>
+        </div>
       </section>
 
       <!-- TAB 1D: TRAINING FORMS BUILDER & REGISTRATIONS -->
@@ -1255,6 +1341,27 @@ Virement</textarea></label>
             <div id="execTargetBar" style="height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#16a34a);transition:width .35s;"></div>
           </div>
           <ul id="execRecList" style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px;font-size:13px;color:#334155;"></ul>
+        </div>
+
+        <!-- #6 Sales Team Leaderboard Card -->
+        <div class="card" id="leaderboardCard" style="padding:18px;margin-bottom:16px;border-left:4px solid #2563eb;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <div>
+              <h3 style="margin:0;">🏆 Leaderboard Équipe Commerciale &amp; Performance CA</h3>
+              <div class="subtitle" style="margin-top:2px;">Classement en temps réel par chiffre d'affaires encaissé, clients closés et pipeline actif.</div>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="refreshLeaderboardBtn">↻ Actualiser</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>Rang</th><th>Commercial</th><th>Leads assignés</th><th>Clients closés</th><th>Conv.</th><th>Pipeline</th><th>CA encaissé</th></tr>
+              </thead>
+              <tbody id="leaderboardTbody">
+                <tr><td colspan="7" class="empty-cell">Chargement du classement…</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <!-- 6 Executive KPI Cards -->
@@ -2226,7 +2333,14 @@ Virement</textarea></label>
       </div>
       <div class="modal-body" style="max-height:78vh;overflow-y:auto;">
         <input type="hidden" id="profContactId" />
-        <div id="profMetaBar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;"></div>
+        <div id="profMetaBar" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px;"></div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+          <span style="font-size:12.5px;font-weight:600;color:#475569;">👤 Commercial assigné :</span>
+          <select id="profAssignSelect" class="select input-sm" style="min-width:170px;">
+            <option value="">— Non assigné —</option>
+          </select>
+          <button type="button" class="btn btn-secondary btn-sm" id="profAssignBtn">Enregistrer</button>
+        </div>
 
         <div class="quality-grid" style="margin-bottom:14px;">
           <div class="card" style="padding:12px;margin:0;">

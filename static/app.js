@@ -116,9 +116,9 @@ function switchTab(tab) {
   if (tab === "conversion") { loadWaTemplates(); loadHotSignals(); loadTrackedLinks(); loadLeadForms(); initWaInbox(); loadWaAutopilot(); }
   else { stopWaPolling(); }
   if (tab === "training-forms") loadTrainingForms();
-  if (tab === "payments") loadPayments();
+  if (tab === "payments") { loadPayments(); loadQuotes(); loadPaymentGateway(); }
   if (tab === "booking") loadBookingHub();
-  if (tab === "dashboard") { loadDashboard(); loadExecutiveBrief(); }
+  if (tab === "dashboard") { loadDashboard(); loadExecutiveBrief(); loadSalesLeaderboard(); }
   if (tab === "quality") loadDuplicates();
   if (tab === "gdrive" && !state.driveLoaded) loadDriveFiles();
   if (tab === "local" && !state.localLoaded) initLocalBrowser();
@@ -5138,3 +5138,236 @@ $("saveBookingSettingsBtn")?.addEventListener("click", async () => {
   }
 });
 $("refreshApptsBtn")?.addEventListener("click", loadAppointmentsList);
+
+// =========================================================================
+// PACK 2: #4 B2B QUOTES, #5 ONLINE PAYMENT GATEWAY, #6 SALES LEADERBOARD
+// =========================================================================
+
+async function loadQuotes() {
+  const tbody = $("quotesTbody");
+  if (!tbody) return;
+  try {
+    const data = await api("/api/quotes");
+    const items = data.items || [];
+    const badge = $("quotesSummaryBadge");
+    if (badge) {
+      badge.textContent = `${items.length} devis · ${Math.round(data.summary?.pending_total || 0).toLocaleString("fr-FR")} en attente`;
+    }
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">Aucun devis créé pour le moment.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items
+      .map((q) => {
+        const isPaid = q.status === "paid";
+        const stBadge = isPaid
+          ? '<span class="badge badge-st-client">PAYÉ ✅</span>'
+          : '<span class="badge badge-st-followup">EN COURS</span>';
+        const amt = `${Math.round(q.total_amount || 0).toLocaleString("fr-FR")} ${esc(q.currency || "FCFA")}`;
+        return `
+          <tr>
+            <td><strong>${esc(q.quote_num)}</strong><br><span class="subtitle" style="font-size:11px;">${q.doc_type === "proforma" ? "Proforma" : "Devis"}</span></td>
+            <td><strong>${esc(q.client_name)}</strong>${q.client_company ? `<br><span class="subtitle" style="font-size:11.5px;">🏢 ${esc(q.client_company)}</span>` : ""}</td>
+            <td>${esc(q.title)}</td>
+            <td><strong>${amt}</strong></td>
+            <td>${stBadge}</td>
+            <td class="col-actions">
+              <a class="icon-btn" href="/quote/${q.id}" target="_blank" rel="noopener noreferrer" title="Ouvrir / PDF">📄</a>
+              ${!isPaid ? `<button class="icon-btn q-convert-btn" data-id="${q.id}" title="Convertir en Paiement & Reçu (1 clic)">💰</button>` : (q.payment_id ? `<a class="icon-btn" href="/receipt/${q.payment_id}" target="_blank" title="Voir le reçu">🧾</a>` : "")}
+              <button class="icon-btn q-wa-btn" data-id="${q.id}" title="Envoyer sur WhatsApp">💬</button>
+              <button class="icon-btn danger q-del-btn" data-id="${q.id}" title="Supprimer">✕</button>
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    tbody.querySelectorAll(".q-convert-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Confirmer l'encaissement de ce devis et générer le reçu officiel signé ?")) return;
+        try {
+          const res = await api(`/api/quotes/${btn.dataset.id}/convert`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ payment_method: "Virement" }),
+          });
+          toast(`Devis converti en paiement ! Reçu ${res.receipt_num} généré.`, "success");
+          loadQuotes();
+          loadPayments();
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      });
+    });
+
+    tbody.querySelectorAll(".q-wa-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/quotes/${btn.dataset.id}/send-wa`, { method: "POST" });
+          toast("Devis envoyé au client sur WhatsApp !", "success");
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      });
+    });
+
+    tbody.querySelectorAll(".q-del-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Supprimer ce devis ?")) return;
+        await api(`/api/quotes/${btn.dataset.id}`, { method: "DELETE" });
+        loadQuotes();
+      });
+    });
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-cell">${esc(e.message)}</td></tr>`;
+  }
+}
+
+$("createQuoteBtn")?.addEventListener("click", async () => {
+  const rawLines = ($("qItemsText")?.value || "").split("\n").map((l) => l.trim()).filter(Boolean);
+  const items = rawLines.map((line) => {
+    const parts = line.split("|").map((p) => p.trim());
+    return {
+      label: parts[0] || line,
+      qty: parseFloat(parts[1] || "1") || 1,
+      unit_price: parseFloat((parts[2] || "0").replace(/\s+/g, "")) || 0,
+    };
+  });
+  try {
+    const res = await api("/api/quotes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        doc_type: $("qDocType")?.value || "devis",
+        client_name: $("qClientName")?.value || "",
+        client_company: $("qClientCompany")?.value || "",
+        client_phone: $("qClientPhone")?.value || "",
+        client_email: $("qClientEmail")?.value || "",
+        title: $("qTitle")?.value || "",
+        items,
+        discount: parseFloat($("qDiscount")?.value || "0") || 0,
+        tax_rate: parseFloat($("qTaxRate")?.value || "0") || 0,
+        valid_until: $("qValidUntil")?.value || "",
+        notes: $("qNotes")?.value || "",
+      }),
+    });
+    toast(`Devis ${res.quote_num} créé !`, "success");
+    if ($("qClientName")) $("qClientName").value = "";
+    if ($("qTitle")) $("qTitle").value = "";
+    if ($("qItemsText")) $("qItemsText").value = "";
+    loadQuotes();
+    window.open(`/quote/${res.id}`, "_blank", "noopener");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+async function loadPaymentGateway() {
+  if (!$("gwProviderSel")) return;
+  try {
+    const cfg = await api("/api/payments/gateway");
+    if ($("gwEnabledChk")) $("gwEnabledChk").checked = !!cfg.enabled;
+    if ($("gwProviderSel")) $("gwProviderSel").value = cfg.provider || "fedapay";
+    if ($("gwCheckoutTpl")) $("gwCheckoutTpl").value = cfg.checkout_url_template || "";
+    if ($("gwPublicKey")) $("gwPublicKey").value = cfg.public_key || "";
+    if ($("gwWebhookUrl")) $("gwWebhookUrl").value = cfg.webhook_url || "";
+    if ($("gwStatusHint")) {
+      $("gwStatusHint").textContent = cfg.enabled
+        ? `✅ Actif (${cfg.provider}) · Secret webhook : ${cfg.webhook_secret_configured ? "configuré" : "auto"}`
+        : "⏸️ Désactivé";
+    }
+  } catch (_) {}
+}
+
+$("saveGwCfgBtn")?.addEventListener("click", async () => {
+  try {
+    const res = await api("/api/payments/gateway", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled: !!$("gwEnabledChk")?.checked,
+        provider: $("gwProviderSel")?.value || "fedapay",
+        checkout_url_template: $("gwCheckoutTpl")?.value || "",
+        public_key: $("gwPublicKey")?.value || "",
+        secret_key: $("gwSecretKey")?.value || "",
+        webhook_secret: $("gwWebhookSecret")?.value || "",
+      }),
+    });
+    if ($("gwSecretKey")) $("gwSecretKey").value = "";
+    if ($("gwWebhookSecret")) $("gwWebhookSecret").value = "";
+    if ($("gwWebhookUrl")) $("gwWebhookUrl").value = res.webhook_url || "";
+    toast("Passerelle de paiement enregistrée !", "success");
+    loadPaymentGateway();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+$("copyGwWebhookBtn")?.addEventListener("click", () => {
+  const u = $("gwWebhookUrl")?.value || "";
+  if (u) {
+    navigator.clipboard.writeText(u);
+    toast("URL Webhook copiée !", "success");
+  }
+});
+
+async function loadSalesLeaderboard() {
+  const tbody = $("leaderboardTbody");
+  if (!tbody) return;
+  try {
+    const data = await api("/api/crm/leaderboard");
+    const list = data.leaderboard || [];
+    const cur = esc(data.currency || "FCFA");
+    // Also populate team assignment dropdown in Contact 360° profile modal
+    const sel = $("profAssignSelect");
+    if (sel) {
+      const currentVal = sel.value;
+      const members = data.team_members || [];
+      sel.innerHTML =
+        '<option value="">— Non assigné —</option>' +
+        members.map((m) => `<option value="${esc(m.username)}">${esc(m.display_name)}</option>`).join("");
+      if (currentVal) sel.value = currentVal;
+    }
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-cell">Aucune donnée commerciale.</td></tr>';
+      return;
+    }
+    const medals = ["🥇", "🥈", "🥉"];
+    tbody.innerHTML = list
+      .map((r, idx) => {
+        const rank = r.username === "Non assigné" ? "—" : (medals[idx] || `#${idx + 1}`);
+        return `
+          <tr>
+            <td><strong>${rank}</strong></td>
+            <td><strong>${esc(r.display_name)}</strong> <span class="subtitle" style="font-size:11.5px;">(${esc(r.role)})</span></td>
+            <td>${r.leads_assigned}</td>
+            <td><span class="badge badge-st-client">${r.clients_closed}</span></td>
+            <td>${r.conversion_rate}%</td>
+            <td>${Math.round(r.pipeline_value || 0).toLocaleString("fr-FR")} ${cur}</td>
+            <td><strong style="color:#15803d;">${Math.round(r.revenue_collected || 0).toLocaleString("fr-FR")} ${cur}</strong></td>
+          </tr>
+        `;
+      })
+      .join("");
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-cell">${esc(e.message)}</td></tr>`;
+  }
+}
+
+$("refreshLeaderboardBtn")?.addEventListener("click", loadSalesLeaderboard);
+
+$("profAssignBtn")?.addEventListener("click", async () => {
+  const cid = $("profContactId")?.value;
+  if (!cid) return;
+  try {
+    await api(`/api/contacts/${cid}/assign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assigned_to: $("profAssignSelect")?.value || "" }),
+    });
+    toast("Attribution commerciale enregistrée !", "success");
+    loadSalesLeaderboard();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});

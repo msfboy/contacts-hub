@@ -156,3 +156,106 @@ def generate_executive_brief(workspace_id: int = 1) -> Dict[str, Any]:
         "overdue_tasks": overdue_tasks,
         "recommendations": recommendations,
     }
+
+
+def compute_sales_leaderboard(workspace_id: int = 1) -> Dict[str, Any]:
+    """#6 Sales Team Leaderboard & Commercial KPIs per team member."""
+    ws = db.get_workspace(workspace_id)
+    currency = ws.get("currency") or "FCFA"
+    with db.get_conn() as conn:
+        users = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT id, username, display_name, role FROM users WHERE COALESCE(workspace_id, 1) = ? ORDER BY id ASC",
+                (workspace_id,),
+            ).fetchall()
+        ]
+        # Map username -> display info
+        reps: Dict[str, Dict[str, Any]] = {}
+        for u in users:
+            uname = (u.get("username") or "").strip()
+            if not uname:
+                continue
+            reps[uname] = {
+                "username": uname,
+                "display_name": (u.get("display_name") or uname).strip(),
+                "role": u.get("role") or "commercial",
+                "leads_assigned": 0,
+                "clients_closed": 0,
+                "pipeline_value": 0.0,
+                "revenue_collected": 0.0,
+                "conversion_rate": 0.0,
+            }
+
+        c_rows = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(TRIM(assigned_to), ''), '') AS rep,
+                   COUNT(*) AS total_leads,
+                   SUM(CASE WHEN status = 'client' THEN 1 ELSE 0 END) AS clients,
+                   SUM(CASE WHEN status != 'client' AND status != 'unsubscribed' THEN COALESCE(deal_value, 0) ELSE 0 END) AS pipeline
+            FROM contacts
+            WHERE COALESCE(workspace_id, 1) = ?
+            GROUP BY rep
+            """,
+            (workspace_id,),
+        ).fetchall()
+
+        for r in c_rows:
+            rep_key = r["rep"] or "Non assigné"
+            if rep_key not in reps:
+                reps[rep_key] = {
+                    "username": rep_key,
+                    "display_name": rep_key,
+                    "role": "équipe" if rep_key != "Non assigné" else "pool",
+                    "leads_assigned": 0,
+                    "clients_closed": 0,
+                    "pipeline_value": 0.0,
+                    "revenue_collected": 0.0,
+                    "conversion_rate": 0.0,
+                }
+            reps[rep_key]["leads_assigned"] += int(r["total_leads"] or 0)
+            reps[rep_key]["clients_closed"] += int(r["clients"] or 0)
+            reps[rep_key]["pipeline_value"] += float(r["pipeline"] or 0.0)
+
+        p_rows = conn.execute(
+            """
+            SELECT COALESCE(NULLIF(TRIM(c.assigned_to), ''), 'Non assigné') AS rep,
+                   SUM(sp.amount_paid) AS rev
+            FROM student_payments sp
+            LEFT JOIN contacts c ON c.id = sp.contact_id
+            WHERE COALESCE(sp.workspace_id, 1) = ?
+            GROUP BY rep
+            """,
+            (workspace_id,),
+        ).fetchall()
+        for r in p_rows:
+            rep_key = r["rep"] or "Non assigné"
+            if rep_key not in reps:
+                reps[rep_key] = {
+                    "username": rep_key,
+                    "display_name": rep_key,
+                    "role": "pool" if rep_key == "Non assigné" else "équipe",
+                    "leads_assigned": 0,
+                    "clients_closed": 0,
+                    "pipeline_value": 0.0,
+                    "revenue_collected": 0.0,
+                    "conversion_rate": 0.0,
+                }
+            reps[rep_key]["revenue_collected"] += float(r["rev"] or 0.0)
+
+    ranked = []
+    for rep in reps.values():
+        leads = rep["leads_assigned"]
+        clients = rep["clients_closed"]
+        rep["conversion_rate"] = round((clients / leads) * 100, 1) if leads > 0 else 0.0
+        rep["score"] = round(rep["revenue_collected"] / 1000.0 + clients * 25.0 + rep["pipeline_value"] / 5000.0, 1)
+        ranked.append(rep)
+
+    # Sort named reps first by revenue/score, keeping "Non assigné" at the bottom
+    ranked.sort(key=lambda x: (x["username"] == "Non assigné", -x["revenue_collected"], -x["clients_closed"], -x["leads_assigned"]))
+    return {
+        "currency": currency,
+        "leaderboard": ranked,
+        "team_members": [{"username": u["username"], "display_name": u.get("display_name") or u["username"]} for u in users],
+    }
+

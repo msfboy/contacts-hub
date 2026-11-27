@@ -364,6 +364,71 @@ class ContactsHubTestSuite(unittest.TestCase):
             ran = workflows_engine.fire_event("payment_received", {"contact_id": c_row["id"], "full_name": "Test"})
             self.assertGreaterEqual(ran, 1)
 
+    # --- 11. Pack 2 (#4 B2B Quotes, #5 Payment Gateway Webhook, #6 Sales Leaderboard) ---
+    def test_13_pack2_quotes_gateway_leaderboard(self):
+        import quotes_hub
+        # #5 Configure payment gateway & test webhook HMAC validation + auto-receipt
+        gw = payments_hub.save_gateway_config(1, {
+            "enabled": True,
+            "provider": "fedapay",
+            "checkout_url_template": "https://me.fedapay.com/msf?amount={amount}&ref={ref}",
+            "webhook_secret": "test-gw-secret-999",
+        })
+        self.assertTrue(gw["enabled"])
+        link = payments_hub.build_payment_link(50000, "DEV-1", "Koffi", 1)
+        self.assertIn("amount=50000", link)
+
+        # Reject bad signature
+        r_bad = self.client.post(
+            "/api/webhooks/gateway/fedapay",
+            json={"status": "approved", "amount": 25000, "student_name": "Bad Sig"},
+            headers={"X-Webhook-Secret": "wrong"},
+        )
+        self.assertEqual(r_bad.status_code, 401)
+
+        # Accept valid secret & create payment
+        r_ok = self.client.post(
+            "/api/webhooks/gateway/fedapay",
+            json={
+                "status": "approved",
+                "amount": 25000,
+                "student_name": "Mawuli Online",
+                "student_phone": "+22897778899",
+                "course_name": "Pack Online",
+                "transaction_id": "FEDA-TX-001",
+            },
+            headers={"X-Webhook-Secret": "test-gw-secret-999"},
+        )
+        self.assertEqual(r_ok.status_code, 201)
+        self.assertTrue(r_ok.get_json()["ok"])
+
+        # #4 Create B2B quote -> view HTML -> 1-click convert to payment & receipt
+        q = quotes_hub.create_quote({
+            "doc_type": "proforma",
+            "client_name": "Directeur RH",
+            "client_company": "Orabank Togo",
+            "client_phone": "+22896665544",
+            "title": "Formation Anglais B2B",
+            "items": [{"label": "Session Cadres", "qty": 5, "unit_price": 40000}],
+            "discount": 10000,
+            "tax_rate": 18,
+        })
+        self.assertTrue(q["ok"])
+        self.assertEqual(q["total_amount"], 224200.0)
+        r_qhtml = self.client.get(f"/quote/{q['id']}")
+        self.assertEqual(r_qhtml.status_code, 200)
+        self.assertIn("Orabank Togo", r_qhtml.get_data(as_text=True))
+        self.assertIn("Payer en ligne", r_qhtml.get_data(as_text=True))
+
+        conv = quotes_hub.convert_quote_to_payment(q["id"], payment_method="Virement")
+        self.assertTrue(conv["ok"])
+        self.assertTrue(conv["receipt_num"].startswith("REC-"))
+
+        # #6 Sales Leaderboard
+        lb = executive_brief.compute_sales_leaderboard(1)
+        self.assertIn("leaderboard", lb)
+        self.assertGreaterEqual(len(lb["leaderboard"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

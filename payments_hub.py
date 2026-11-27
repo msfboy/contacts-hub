@@ -1,6 +1,10 @@
+import hashlib
+import hmac
+import json
 import secrets
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote_plus
 
 import db
 import wa_client
@@ -312,11 +316,18 @@ def send_unpaid_reminder_wa(
     ws = db.get_workspace(workspace_id)
     currency = ws.get("currency") or "FCFA"
     first = (student_name or "").strip().split(" ")[0] or "Cher apprenant"
+    pay_url = build_payment_link(
+        amount=remaining_balance,
+        ref=f"SOLDE-{datetime.now().strftime('%m%d')}",
+        customer_name=student_name,
+        workspace_id=workspace_id,
+    )
+    pay_line = f"\n💳 Régler en ligne en 1 clic : {pay_url}\n" if pay_url else ""
     msg = (
         f"Bonjour {first} 👋\n"
         f"Petit rappel amical de *{ws['name']}* concernant votre formation *{course_name}*.\n\n"
         f"• Solde restant à régler : *{_fmt_money(remaining_balance, currency)}*\n"
-        f"• Moyens acceptés : TMoney, Flooz, Espèces ou Virement.\n\n"
+        f"• Moyens acceptés : TMoney, Flooz, Espèces ou Virement.{pay_line}\n"
         f"Dès réception de votre règlement, nous vous transmettrons immédiatement votre reçu officiel signé ici sur WhatsApp. Merci ! 🙏"
     )
     res = wa_client.bridge_post("/send", {"phone": phone, "text": msg}, timeout=15.0)
@@ -383,3 +394,164 @@ def export_cashbook_xlsx(workspace_id: int = 1, month: str = "") -> bytes:
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# #5 Online Payment Gateway (FedaPay / CinetPay / PayGate / Stripe / Custom)
+# ---------------------------------------------------------------------------
+
+VALID_GATEWAY_PROVIDERS = {"fedapay", "cinetpay", "paygate", "stripe", "custom_link"}
+
+
+def _gw_key(workspace_id: int) -> str:
+    return f"payment_gateway_ws_{int(workspace_id or 1)}"
+
+
+def get_gateway_config(workspace_id: int = 1, include_secrets: bool = False) -> Dict[str, Any]:
+    raw = db.get_app_setting(_gw_key(workspace_id), "")
+    cfg: Dict[str, Any] = {}
+    if raw:
+        try:
+            cfg = json.loads(raw)
+        except Exception:
+            cfg = {}
+    secret_plain = db.decrypt_secret(cfg.get("secret_key_enc") or "") if cfg.get("secret_key_enc") else ""
+    webhook_plain = db.decrypt_secret(cfg.get("webhook_secret_enc") or "") if cfg.get("webhook_secret_enc") else ""
+    out = {
+        "enabled": bool(cfg.get("enabled", False)),
+        "provider": cfg.get("provider") or "fedapay",
+        "public_key": cfg.get("public_key") or "",
+        "checkout_url_template": cfg.get("checkout_url_template") or "",
+        "instructions": cfg.get("instructions") or "",
+        "secret_configured": bool(secret_plain),
+        "webhook_secret_configured": bool(webhook_plain),
+    }
+    if include_secrets:
+        out["secret_key"] = secret_plain
+        out["webhook_secret"] = webhook_plain
+    return out
+
+
+def save_gateway_config(workspace_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+    prev = get_gateway_config(workspace_id, include_secrets=True)
+    provider = str(data.get("provider") or prev.get("provider") or "fedapay").strip().lower()
+    if provider not in VALID_GATEWAY_PROVIDERS:
+        provider = "custom_link"
+    secret_key = str(data.get("secret_key") or "").strip() or prev.get("secret_key", "")
+    webhook_secret = str(data.get("webhook_secret") or "").strip() or prev.get("webhook_secret", "")
+    if not webhook_secret:
+        webhook_secret = secrets.token_hex(16)
+    payload = {
+        "enabled": bool(data.get("enabled", prev.get("enabled", False))),
+        "provider": provider,
+        "public_key": str(data.get("public_key") if data.get("public_key") is not None else prev.get("public_key", "")).strip(),
+        "checkout_url_template": str(
+            data.get("checkout_url_template")
+            if data.get("checkout_url_template") is not None
+            else prev.get("checkout_url_template", "")
+        ).strip(),
+        "instructions": str(data.get("instructions") if data.get("instructions") is not None else prev.get("instructions", "")).strip(),
+        "secret_key_enc": db.encrypt_secret(secret_key) if secret_key else "",
+        "webhook_secret_enc": db.encrypt_secret(webhook_secret) if webhook_secret else "",
+    }
+    db.set_app_setting(_gw_key(workspace_id), json.dumps(payload, ensure_ascii=False))
+    res = get_gateway_config(workspace_id, include_secrets=False)
+    res["webhook_secret_preview"] = webhook_secret[:6] + "…" + webhook_secret[-4:] if len(webhook_secret) >= 10 else ""
+    return res
+
+
+def build_payment_link(
+    amount: float,
+    ref: str = "",
+    customer_name: str = "",
+    workspace_id: int = 1,
+) -> str:
+    cfg = get_gateway_config(workspace_id, include_secrets=False)
+    if not cfg.get("enabled"):
+        return ""
+    tpl = (cfg.get("checkout_url_template") or "").strip()
+    if not tpl or not (tpl.startswith("https://") or tpl.startswith("http://")):
+        return ""
+    amt_str = str(int(round(float(amount or 0))))
+    url = (
+        tpl.replace("{amount}", quote_plus(amt_str))
+        .replace("{ref}", quote_plus(str(ref or "")))
+        .replace("{name}", quote_plus(str(customer_name or "")))
+    )
+    return url
+
+
+def process_gateway_webhook(
+    provider: str,
+    payload: Dict[str, Any],
+    raw_body: bytes,
+    signature: str = "",
+    workspace_id: int = 1,
+) -> Dict[str, Any]:
+    cfg = get_gateway_config(workspace_id, include_secrets=True)
+    expected_secret = (cfg.get("webhook_secret") or "").strip()
+    if not expected_secret:
+        return {"ok": False, "error": "Passerelle non configurée (secret webhook manquant).", "status": 403}
+
+    sig = (signature or "").strip()
+    expected_hmac = hmac.new(expected_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    valid = (
+        hmac.compare_digest(sig, expected_secret)
+        or hmac.compare_digest(sig.lower(), expected_hmac.lower())
+        or hmac.compare_digest(sig.lower(), f"sha256={expected_hmac.lower()}")
+    )
+    if not valid:
+        return {"ok": False, "error": "Signature webhook invalide.", "status": 401}
+
+    # Normalize common fields across FedaPay / CinetPay / PayGate / Stripe / Custom
+    entity = payload.get("entity") if isinstance(payload.get("entity"), dict) else payload
+    status_val = str(entity.get("status") or payload.get("status") or "approved").strip().lower()
+    if status_val not in ("approved", "paid", "succeeded", "completed", "accepted", "success", "00"):
+        return {"ok": True, "ignored": True, "reason": f"Statut non payé ({status_val})"}
+
+    customer = entity.get("customer") if isinstance(entity.get("customer"), dict) else {}
+    student_name = (
+        entity.get("student_name")
+        or entity.get("customer_name")
+        or f"{customer.get('firstname', '')} {customer.get('lastname', '')}".strip()
+        or "Client En Ligne"
+    )
+    student_phone = entity.get("student_phone") or entity.get("phone") or customer.get("phone_number") or ""
+    if isinstance(student_phone, dict):
+        student_phone = student_phone.get("number") or ""
+    student_email = entity.get("student_email") or entity.get("email") or customer.get("email") or ""
+    course_name = entity.get("course_name") or entity.get("description") or entity.get("title") or "Paiement en ligne"
+    try:
+        amount = float(entity.get("amount") or entity.get("amount_paid") or 0)
+    except Exception:
+        amount = 0.0
+    tx_ref = str(
+        entity.get("reference")
+        or entity.get("transaction_id")
+        or entity.get("tx_reference")
+        or entity.get("id")
+        or f"{provider.upper()}-{secrets.token_hex(4).upper()}"
+    ).strip()
+
+    prov_label = {
+        "fedapay": "FedaPay (En ligne)",
+        "cinetpay": "CinetPay (En ligne)",
+        "paygate": "PayGate (Mobile Money)",
+        "stripe": "Stripe (Carte)",
+        "custom_link": "Paiement en ligne",
+    }.get(provider.lower(), f"{provider} (En ligne)")
+
+    res = create_payment({
+        "student_name": str(student_name),
+        "student_phone": str(student_phone),
+        "student_email": str(student_email),
+        "course_name": str(course_name),
+        "total_fee": float(entity.get("total_fee") or amount),
+        "amount_paid": amount,
+        "payment_method": prov_label,
+        "payment_ref": tx_ref,
+        "notes": f"Encaissement automatique via {prov_label}",
+        "workspace_id": workspace_id,
+    })
+    return res
+
