@@ -429,6 +429,41 @@ class ContactsHubTestSuite(unittest.TestCase):
         self.assertIn("leaderboard", lb)
         self.assertGreaterEqual(len(lb["leaderboard"]), 1)
 
+    # --- 12. Pack 3 (#7 Voice-to-CRM, #8 Geo Map, #9 VIP Client Portal, #10 Notifications) ---
+    def test_14_pack3_voice_geo_portal_notifications(self):
+        import premium_hub
+        with db.get_conn() as conn:
+            c = conn.execute("SELECT id FROM contacts LIMIT 1").fetchone()
+        self.assertIsNotNone(c)
+        cid = int(c["id"])
+
+        # #7 Voice-to-CRM (transcript -> note + automatic follow-up task)
+        vres = premium_hub.process_voice_note(cid, "Client très intéressé, rappeler demain pour envoyer le devis")
+        self.assertTrue(vres["ok"])
+        self.assertIsNotNone(vres["task_created"])
+
+        # #8 Geo-Intelligence Map points
+        geo = premium_hub.get_geo_points(1)
+        self.assertIn("points", geo)
+        self.assertGreaterEqual(geo["total_mapped"], 1)
+
+        # #9 VIP Client Portal (HMAC token verification + HTML rendering)
+        tok = premium_hub.make_portal_token(cid)
+        self.assertEqual(premium_hub.verify_portal_token(tok), cid)
+        self.assertIsNone(premium_hub.verify_portal_token(f"{cid}-tampered000000000000"))
+
+        r_bad = self.client.get(f"/mon-espace/{cid}-invalidtoken")
+        self.assertEqual(r_bad.status_code, 403)
+
+        r_ok = self.client.get(f"/mon-espace/{tok}")
+        self.assertEqual(r_ok.status_code, 200)
+        self.assertIn("ESPACE VIP SÉCURISÉ", r_ok.get_data(as_text=True))
+
+        # #10 Real-Time Notifications Center
+        notifs = premium_hub.get_notifications(1)
+        self.assertIn("items", notifs)
+        self.assertGreaterEqual(notifs["count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

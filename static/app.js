@@ -118,7 +118,7 @@ function switchTab(tab) {
   if (tab === "training-forms") loadTrainingForms();
   if (tab === "payments") { loadPayments(); loadQuotes(); loadPaymentGateway(); }
   if (tab === "booking") loadBookingHub();
-  if (tab === "dashboard") { loadDashboard(); loadExecutiveBrief(); loadSalesLeaderboard(); }
+  if (tab === "dashboard") { loadDashboard(); loadExecutiveBrief(); loadSalesLeaderboard(); loadGeoMap(); }
   if (tab === "quality") loadDuplicates();
   if (tab === "gdrive" && !state.driveLoaded) loadDriveFiles();
   if (tab === "local" && !state.localLoaded) initLocalBrowser();
@@ -5371,3 +5371,211 @@ $("profAssignBtn")?.addEventListener("click", async () => {
     toast(e.message, "error");
   }
 });
+
+// =========================================================================
+// PACK 3: #7 VOICE-TO-CRM, #8 GEO MAP, #9 VIP PORTAL, #10 BOARDROOM & ALERTS
+// =========================================================================
+
+// #7 Voice-to-CRM (Web Speech API -> Structured Note + Auto Follow-up Task)
+(function initVoiceToCrm() {
+  const btn = $("profVoiceBtn");
+  if (!btn) return;
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null;
+  let listening = false;
+
+  btn.addEventListener("click", () => {
+    const cid = $("profContactId")?.value;
+    if (!cid) return;
+    if (!SpeechRec) {
+      const manual = prompt("Votre navigateur ne supporte pas la dictée micro directe. Collez ou saisissez votre note vocale :");
+      if (manual && manual.trim()) submitVoiceTranscript(cid, manual.trim());
+      return;
+    }
+    if (listening && rec) {
+      rec.stop();
+      return;
+    }
+    rec = new SpeechRec();
+    rec.lang = "fr-FR";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    listening = true;
+    btn.textContent = "🔴";
+    btn.title = "Écoute en cours… cliquez pour arrêter";
+    toast("🎙️ Parlez maintenant (ex: « Client intéressé, relancer demain pour le devis »)…", "info");
+
+    rec.onresult = async (ev) => {
+      const transcript = ev.results?.[0]?.[0]?.transcript || "";
+      if ($("profActText")) $("profActText").value = transcript;
+      if (transcript.trim()) {
+        await submitVoiceTranscript(cid, transcript.trim());
+      }
+    };
+    rec.onerror = (ev) => {
+      toast(`Dictée vocale interrompue (${ev.error || "micro"}).`, "error");
+    };
+    rec.onend = () => {
+      listening = false;
+      btn.textContent = "🎙️";
+      btn.title = "Dictée Vocale IA (Voice-to-CRM)";
+    };
+    rec.start();
+  });
+
+  async function submitVoiceTranscript(cid, transcript) {
+    try {
+      const res = await api("/api/ai/voice-to-crm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contact_id: Number(cid), transcript }),
+      });
+      const extra = res.task_created
+        ? ` + Rappel créé automatiquement (${res.task_created.due_date}) !`
+        : "";
+      toast(`🎙️ Note vocale enregistrée${extra}`, "success");
+      if ($("profActText")) $("profActText").value = "";
+      if (typeof openProfile === "function") openProfile(cid);
+    } catch (e) {
+      toast(e.message, "error");
+    }
+  }
+})();
+
+// #8 Interactive Geo-Intelligence Map (Leaflet + OpenStreetMap)
+let _geoMap = null;
+let _geoLayer = null;
+
+async function loadGeoMap() {
+  const container = $("geoMapContainer");
+  if (!container) return;
+  try {
+    const data = await api("/api/geo/points");
+    const badge = $("geoSummaryBadge");
+    if (badge) {
+      badge.textContent = `${data.cities_count || 0} ville(s) · ${data.total_mapped || 0} contact(s) géolocalisé(s)`;
+    }
+    if (typeof window.L === "undefined") {
+      container.innerHTML = '<div class="empty-cell" style="padding:40px;">Carte Leaflet indisponible hors ligne.</div>';
+      return;
+    }
+    if (!_geoMap) {
+      _geoMap = window.L.map("geoMapContainer").setView([6.1375, 1.2123], 5);
+      window.L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 18,
+        attribution: "&copy; OpenStreetMap",
+      }).addTo(_geoMap);
+      _geoLayer = window.L.layerGroup().addTo(_geoMap);
+    }
+    _geoLayer.clearLayers();
+    const pts = data.points || [];
+    const bounds = [];
+    const cur = esc(data.currency || "FCFA");
+    pts.forEach((pt) => {
+      const radius = Math.min(26, Math.max(8, 7 + Math.sqrt(pt.total_contacts) * 3.2));
+      const color = pt.clients_count > 0 ? "#16a34a" : "#2563eb";
+      const marker = window.L.circleMarker([pt.lat, pt.lng], {
+        radius,
+        color,
+        fillColor: color,
+        fillOpacity: 0.45,
+        weight: 2,
+      });
+      marker.bindPopup(
+        `<strong>📍 ${esc(pt.city)} (${esc(pt.country)})</strong><br>` +
+        `Contacts : <b>${pt.total_contacts}</b> · Clients : <b>${pt.clients_count}</b><br>` +
+        `Pipeline : <b>${Math.round(pt.pipeline_value || 0).toLocaleString("fr-FR")} ${cur}</b>` +
+        (pt.sample_names?.length ? `<br><small>${pt.sample_names.map(esc).join(", ")}</small>` : "")
+      );
+      marker.addTo(_geoLayer);
+      bounds.push([pt.lat, pt.lng]);
+    });
+    setTimeout(() => {
+      if (_geoMap) {
+        _geoMap.invalidateSize();
+        if (bounds.length === 1) _geoMap.setView(bounds[0], 7);
+        else if (bounds.length > 1) _geoMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 9 });
+      }
+    }, 150);
+  } catch (_) {}
+}
+
+$("refreshGeoMapBtn")?.addEventListener("click", loadGeoMap);
+
+// #9 VIP Client Portal Link Copier
+$("profPortalBtn")?.addEventListener("click", async () => {
+  const cid = $("profContactId")?.value;
+  if (!cid) return;
+  try {
+    const res = await api(`/api/contacts/${cid}/portal-link`);
+    if (res.url) {
+      await navigator.clipboard.writeText(res.url);
+      toast(`🛡️ Lien Portail VIP copié : ${res.url}`, "success");
+    }
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+// #10 Real-Time Notification Center + Boardroom / Dark Luxury Mode
+async function loadNotifications() {
+  const badge = $("notifBadge");
+  const listEl = $("notifList");
+  if (!badge || !listEl) return;
+  try {
+    const data = await api("/api/notifications");
+    const items = data.items || [];
+    badge.textContent = String(data.count || 0);
+    if (!items.length) {
+      listEl.innerHTML = '<div class="empty-cell" style="padding:20px;">Aucune alerte active ✅</div>';
+      return;
+    }
+    listEl.innerHTML = items
+      .map(
+        (n) => `
+        <div class="notif-item" data-tab="${esc(n.tab || "dashboard")}">
+          <div class="notif-icon">${n.icon || "🔔"}</div>
+          <div style="min-width:0;flex:1;">
+            <div class="notif-title">${esc(n.title)}</div>
+            <div class="notif-sub">${esc(n.subtitle)}</div>
+            <div class="notif-sub" style="opacity:0.75;">${esc(n.time || "")}</div>
+          </div>
+        </div>
+      `
+      )
+      .join("");
+    listEl.querySelectorAll(".notif-item").forEach((el) => {
+      el.addEventListener("click", () => {
+        $("notifDrawer")?.classList.add("hidden");
+        switchTab(el.dataset.tab || "dashboard");
+      });
+    });
+  } catch (_) {}
+}
+
+$("notifBellBtn")?.addEventListener("click", () => {
+  const d = $("notifDrawer");
+  if (!d) return;
+  const opening = d.classList.contains("hidden");
+  d.classList.toggle("hidden");
+  if (opening) loadNotifications();
+});
+$("closeNotifDrawerBtn")?.addEventListener("click", () => $("notifDrawer")?.classList.add("hidden"));
+
+(function initBoardroomMode() {
+  const btn = $("boardroomToggleBtn");
+  const apply = (on) => {
+    document.body.classList.toggle("boardroom-mode", on);
+    if (btn) btn.title = on ? "Quitter le Mode Boardroom" : "Activer Mode Boardroom (Obsidian & Gold)";
+  };
+  const saved = localStorage.getItem("contactshub_boardroom") === "1";
+  apply(saved);
+  btn?.addEventListener("click", () => {
+    const next = !document.body.classList.contains("boardroom-mode");
+    localStorage.setItem("contactshub_boardroom", next ? "1" : "0");
+    apply(next);
+    toast(next ? "👑 Mode Boardroom (Obsidian & Gold) activé !" : "Mode Clair activé.", "info");
+  });
+  loadNotifications();
+  setInterval(loadNotifications, 45000);
+})();

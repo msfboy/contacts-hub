@@ -10,6 +10,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -104,12 +106,29 @@
       </nav>
 
       <div class="sidebar-footer">
+        <div style="display:flex;gap:6px;margin-bottom:8px;">
+          <button type="button" class="btn btn-secondary btn-sm" id="notifBellBtn" style="flex:1;justify-content:center;position:relative;" title="Centre de Notifications Temps Réel">
+            🔔 Alertes <span id="notifBadge" class="badge badge-st-followup" style="margin-left:4px;padding:1px 6px;font-size:10.5px;">0</span>
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="boardroomToggleBtn" title="Basculer Mode Boardroom (Obsidian & Gold)">👑</button>
+        </div>
         <div class="status-pill" id="driveStatusPill">
           <span class="dot"></span>
           <span>Vérification Drive…</span>
         </div>
       </div>
     </aside>
+
+    <!-- #10 Real-Time Notification Drawer -->
+    <div id="notifDrawer" class="notif-drawer hidden">
+      <div class="notif-drawer-header">
+        <strong>🔔 Centre de Notifications</strong>
+        <button type="button" class="icon-btn" id="closeNotifDrawerBtn">✕</button>
+      </div>
+      <div id="notifList" class="notif-list">
+        <div class="empty-cell">Chargement des notifications…</div>
+      </div>
+    </div>
 
     <!-- Main content -->
     <main class="main">
@@ -1364,6 +1383,21 @@ Virement</textarea></label>
           </div>
         </div>
 
+        <!-- #8 Interactive Geo-Intelligence Map -->
+        <div class="card" id="geoMapCard" style="padding:18px;margin-bottom:16px;border-left:4px solid #0d9488;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <div>
+              <h3 style="margin:0;">🌍 Carte Interactive Geo-Intelligence</h3>
+              <div class="subtitle" style="margin-top:2px;">Répartition géographique de vos prospects, clients et valeur de pipeline par ville.</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span class="badge badge-st-contacted" id="geoSummaryBadge">0 ville(s)</span>
+              <button class="btn btn-secondary btn-sm" id="refreshGeoMapBtn">↻ Actualiser</button>
+            </div>
+          </div>
+          <div id="geoMapContainer" style="height:340px;width:100%;border-radius:10px;border:1px solid #e2e8f0;z-index:1;"></div>
+        </div>
+
         <!-- 6 Executive KPI Cards -->
         <div class="dash-kpi-grid">
           <div class="card dash-kpi accent-green">
@@ -2340,18 +2374,20 @@ Virement</textarea></label>
             <option value="">— Non assigné —</option>
           </select>
           <button type="button" class="btn btn-secondary btn-sm" id="profAssignBtn">Enregistrer</button>
+          <button type="button" class="btn btn-primary btn-sm" id="profPortalBtn" style="margin-left:auto;" title="Copier le lien sécurisé du Portail Client VIP">🛡️ Copier lien Portail VIP</button>
         </div>
 
         <div class="quality-grid" style="margin-bottom:14px;">
           <div class="card" style="padding:12px;margin:0;">
-            <strong style="font-size:13px;">📝 Ajouter une note / appel</strong>
+            <strong style="font-size:13px;">📝 Ajouter une note / appel (ou Dictée Vocale IA)</strong>
             <div style="display:flex;gap:6px;margin-top:8px;">
               <select id="profActKind" class="select input-sm">
                 <option value="note">Note</option>
                 <option value="call">Appel</option>
                 <option value="meeting">Rendez-vous</option>
               </select>
-              <input type="text" id="profActText" class="input input-sm" style="flex:1;" placeholder="Résumé de l'échange…" />
+              <input type="text" id="profActText" class="input input-sm" style="flex:1;" placeholder="Résumé de l'échange ou cliquez sur 🎙️…" />
+              <button type="button" class="btn btn-secondary btn-sm" id="profVoiceBtn" title="Dictée Vocale IA (Voice-to-CRM)">🎙️</button>
               <button class="btn btn-primary btn-sm" id="profAddActBtn">+</button>
             </div>
           </div>

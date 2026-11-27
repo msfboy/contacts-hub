@@ -31,6 +31,7 @@ import local_radar
 import net_guard
 import parsers
 import payments_hub
+import premium_hub
 import prospecting
 import quotes_hub
 import services
@@ -144,6 +145,7 @@ PUBLIC_PREFIXES = (
     "/api/booking/slots",
     "/receipt/",
     "/quote/",
+    "/mon-espace/",
     "/f/",
     "/l/",
 )
@@ -3893,6 +3895,61 @@ def api_assign_contact(cid: int):
             (cid, f"👤 Contact assigné à : {rep or 'Non assigné'}", now),
         )
     return jsonify({"ok": True, "assigned_to": rep})
+
+
+# ---------------- PACK 3: VOICE-TO-CRM, GEO MAP, VIP CLIENT PORTAL & NOTIFICATIONS ----------------
+
+@app.route("/api/ai/voice-to-crm", methods=["POST"])
+def api_voice_to_crm():
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        cid = int(data.get("contact_id") or 0)
+    except Exception:
+        cid = 0
+    if cid <= 0:
+        return jsonify({"ok": False, "error": "contact_id requis."}), 400
+    res = premium_hub.process_voice_note(cid, data.get("transcript") or "")
+    if not res.get("ok"):
+        return jsonify(res), 400
+    return jsonify(res), 201
+
+
+@app.route("/api/geo/points", methods=["GET"])
+def api_geo_points():
+    return jsonify(premium_hub.get_geo_points(_active_ws_id()))
+
+
+@app.route("/api/contacts/<int:cid>/portal-link", methods=["GET"])
+def api_contact_portal_link(cid: int):
+    tok = premium_hub.make_portal_token(cid)
+    base = _public_base_url(_active_ws_id())
+    return jsonify({"ok": True, "token": tok, "url": f"{base}/mon-espace/{tok}"})
+
+
+@app.route("/mon-espace/<token>", methods=["GET"])
+def public_client_portal(token: str):
+    cid = premium_hub.verify_portal_token(token)
+    if cid is None:
+        return "Lien Portail Client invalide ou expiré.", 403
+    data = premium_hub.get_portal_data(cid)
+    if not data:
+        return "Espace client introuvable.", 404
+    return render_template(
+        "client_portal.html",
+        contact=data["contact"],
+        workspace=data["workspace"],
+        payments=data["payments"],
+        submissions=data["submissions"],
+        quotes=data["quotes"],
+        appointments=data["appointments"],
+        summary=data["summary"],
+        online_pay_url=data["online_pay_url"],
+    )
+
+
+@app.route("/api/notifications", methods=["GET"])
+def api_notifications():
+    return jsonify(premium_hub.get_notifications(_active_ws_id()))
 
 
 if __name__ == "__main__":
