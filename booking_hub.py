@@ -1,6 +1,6 @@
 import secrets
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import db
@@ -218,3 +218,55 @@ def send_appointment_reminder_wa(aid: int) -> Dict[str, Any]:
     if not res.get("ok"):
         return {"ok": False, "error": res.get("error") or "WhatsApp non connecté."}
     return {"ok": True}
+
+
+def process_due_appointment_reminders() -> Dict[str, Any]:
+    """Automatically send J-1 and H-2 WhatsApp reminders for upcoming confirmed appointments."""
+    if not wa_client.is_bridge_alive():
+        return {"checked": 0, "sent_j1": 0, "sent_h2": 0}
+    st = wa_client.bridge_get("/status", timeout=2.0)
+    if st.get("state") != "connected":
+        return {"checked": 0, "sent_j1": 0, "sent_h2": 0}
+
+    now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    tomorrow_str = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    sent_j1 = 0
+    sent_h2 = 0
+
+    with db.get_conn() as conn:
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                """
+                SELECT * FROM appointments
+                WHERE status = 'confirmed' AND appointment_date IN (?, ?)
+                  AND (COALESCE(reminded_j1, 0) = 0 OR COALESCE(reminded_h2, 0) = 0)
+                """,
+                (today_str, tomorrow_str),
+            ).fetchall()
+        ]
+
+    for a in rows:
+        if not a.get("phone"):
+            continue
+        if a["appointment_date"] == tomorrow_str and not a.get("reminded_j1") and 8 <= now.hour <= 21:
+            res = send_appointment_reminder_wa(a["id"])
+            if res.get("ok"):
+                with db.get_conn() as conn:
+                    conn.execute("UPDATE appointments SET reminded_j1 = 1 WHERE id = ?", (a["id"],))
+                sent_j1 += 1
+        elif a["appointment_date"] == today_str and not a.get("reminded_h2"):
+            try:
+                slot_dt = datetime.strptime(f"{a['appointment_date']} {a['appointment_time'][:5]}", "%Y-%m-%d %H:%M")
+                diff_min = (slot_dt - now).total_seconds() / 60.0
+                if 15 <= diff_min <= 150:
+                    res = send_appointment_reminder_wa(a["id"])
+                    if res.get("ok"):
+                        with db.get_conn() as conn:
+                            conn.execute("UPDATE appointments SET reminded_h2 = 1 WHERE id = ?", (a["id"],))
+                        sent_h2 += 1
+            except ValueError:
+                pass
+
+    return {"checked": len(rows), "sent_j1": sent_j1, "sent_h2": sent_h2}

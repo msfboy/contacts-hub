@@ -2608,19 +2608,22 @@ async function loadWaConversations(silent = false) {
     waConversationsCache = data.items || [];
     const box = $("waConvList");
     if (!box) return;
-    if (!waConversationsCache.length) {
-      box.innerHTML = '<div class="empty-cell" style="padding:24px 12px;">Aucune discussion synchronisée.<br/>Connectez WhatsApp ou cliquez sur 💬 sur un contact.</div>';
+    const unreadOnly = Boolean($("waUnreadOnlyToggle")?.checked);
+    const listToShow = unreadOnly ? waConversationsCache.filter((c) => !c.last_from_me) : waConversationsCache;
+    if (!listToShow.length) {
+      box.innerHTML = `<div class="empty-cell" style="padding:24px 12px;">${unreadOnly ? "Toutes vos discussions ont reçu une réponse 🎉" : "Aucune discussion synchronisée.<br/>Connectez WhatsApp ou cliquez sur 💬 sur un contact."}</div>`;
       return;
     }
-    box.innerHTML = waConversationsCache
+    box.innerHTML = listToShow
       .map((conv) => {
         const isActive = waActiveChat && (waActiveChat.jid === conv.jid || (waActiveChat.phone && waActiveChat.phone === conv.phone));
         const timeStr = (conv.last_sent_at || "").slice(11, 16) || (conv.last_sent_at || "").slice(0, 10);
         const crmBadge = conv.contact_id ? `<span class="badge badge-pro" style="font-size:10px;padding:1px 5px;">CRM</span>` : "";
+        const unreadDot = !conv.last_from_me ? '<span title="En attente de réponse" style="font-size:10px;">🔵</span> ' : "";
         return `
           <div class="wa-conv-item ${isActive ? "active" : ""}" data-jid="${esc(conv.jid)}">
             <div class="wa-conv-top">
-              <span class="wa-conv-name">${esc(conv.display_name)} ${crmBadge}</span>
+              <span class="wa-conv-name">${unreadDot}${esc(conv.display_name)} ${crmBadge}</span>
               <span class="wa-conv-time">${esc(timeStr)}</span>
             </div>
             <div class="wa-conv-preview">${conv.last_from_me ? "Vous : " : ""}${esc(conv.last_body || conv.phone)}</div>
@@ -2838,6 +2841,44 @@ $("waLogoutBtn")?.addEventListener("click", async () => {
   toast("Session WhatsApp déconnectée.", "info");
   refreshWaStatus();
 });
+$("waAttachBtn")?.addEventListener("click", () => {
+  if (!waActiveChat) return toast("Sélectionnez d'abord une discussion WhatsApp.", "error");
+  $("waAttachFile")?.click();
+});
+
+$("waAttachFile")?.addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (!file || !waActiveChat) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("phone", waActiveChat.phone || "");
+  fd.append("jid", waActiveChat.jid || "");
+  fd.append("caption", ($("waComposerInput")?.value || "").trim());
+  const btn = $("waAttachBtn");
+  if (btn) btn.disabled = true;
+  try {
+    await api("/api/wa/send-media", { method: "POST", body: fd });
+    if ($("waComposerInput")) $("waComposerInput").value = "";
+    toast(`Fichier « ${file.name} » envoyé sur WhatsApp !`, "success");
+    loadWaMessages(waActiveChat, true);
+    loadWaConversations(true);
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    if (btn) btn.disabled = false;
+    e.target.value = "";
+  }
+});
+
+$("waComposerInput")?.addEventListener("input", (e) => {
+  const val = e.target.value || "";
+  if (val === "/") {
+    $("waQuickTplSelect")?.focus();
+  }
+});
+
+$("waUnreadOnlyToggle")?.addEventListener("change", () => loadWaConversations(true));
+
 $("waSyncBtn")?.addEventListener("click", async () => {
   try {
     const res = await api("/api/wa/sync", { method: "POST" });
@@ -3510,7 +3551,66 @@ async function loadFormSubmissions(fid) {
 
 // ---------------- ADMIN, SECURITY, GDPR & AUDIT ----------------
 
+async function loadIssuedLicenses() {
+  const tbody = $("issuedLicensesTbody");
+  if (!tbody) return;
+  try {
+    const data = await api("/api/admin/license/history");
+    const items = data.items || [];
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">Aucune licence client générée pour l\'instant.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items
+      .map(
+        (l, idx) => `
+        <tr>
+          <td><strong>${esc(l.client_name)}</strong></td>
+          <td><code>${esc(l.plan)}</code></td>
+          <td>${esc(l.exp_date)}</td>
+          <td>${l.valid ? `<span class="badge badge-st-client">✅ Active (${l.exp_date === "lifetime" ? "∞" : l.days_left + "j"})</span>` : '<span class="badge badge-st-unsubscribed">❌ Expirée</span>'}</td>
+          <td class="col-actions">
+            <button class="btn btn-secondary btn-sm lic-copy-row" data-idx="${idx}">📋 Copier</button>
+            <button class="btn btn-primary btn-sm lic-renew-row" data-idx="${idx}">🔄 +30j</button>
+          </td>
+        </tr>`
+      )
+      .join("");
+    tbody.querySelectorAll(".lic-copy-row").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const l = items[Number(btn.dataset.idx)];
+        try { await navigator.clipboard.writeText(l.license_key); toast("Clé copiée !", "success"); } catch {}
+      });
+    });
+    tbody.querySelectorAll(".lic-renew-row").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const l = items[Number(btn.dataset.idx)];
+        btn.disabled = true;
+        try {
+          const res = await api("/api/admin/license/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ client_name: l.client_name, plan: l.plan, days: 30, max_contacts: l.max_contacts || 25000 }),
+          });
+          if ($("generatedLicenseOut")) {
+            $("generatedLicenseOut").value = res.license_key;
+            $("generatedLicenseOut").classList.remove("hidden");
+          }
+          $("copyLicenseBtn")?.classList.remove("hidden");
+          toast(`Clé renouvelée +30j pour ${l.client_name} !`, "success");
+          loadIssuedLicenses();
+        } catch (e) {
+          toast(e.message, "error");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  } catch {}
+}
+
 async function loadAdminLicense() {
+  loadIssuedLicenses();
   try {
     const lic = await api("/api/admin/license");
     const el = $("adminLicenseSummary");
@@ -3544,6 +3644,7 @@ $("genLicenseBtn")?.addEventListener("click", async () => {
     }
     copyBtn?.classList.remove("hidden");
     toast(`Clé générée pour ${res.payload?.client} (expire : ${res.payload?.exp}) !`, "success");
+    loadIssuedLicenses();
   } catch (e) {
     toast(e.message, "error");
   }
@@ -4348,11 +4449,72 @@ $("payRegistrationSelect")?.addEventListener("change", (e) => {
   $("payAmountPaid")?.focus();
 });
 
+async function loadUnpaidBalances() {
+  const tbody = $("unpaidBalancesTbody");
+  if (!tbody) return;
+  try {
+    const wsId = state.workspaceId || 1;
+    const data = await api(`/api/payments/unpaid?workspace_id=${wsId}`);
+    const items = data.items || [];
+    if ($("unpaidCountBadge")) $("unpaidCountBadge").textContent = `${items.length} impayé(s)`;
+    if (!items.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">Aucun solde impayé 🎉</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items
+      .map(
+        (u, idx) => `
+        <tr>
+          <td><strong>${esc(u.student_name)}</strong><div class="contact-role">${esc(u.student_phone || u.student_email || "")}</div></td>
+          <td>${esc(u.course_name)}</td>
+          <td>${fmtFcfa(u.cumulative_paid)} / ${fmtFcfa(u.effective_fee)}</td>
+          <td style="color:#b45309;font-weight:700;">${fmtFcfa(u.remaining_balance)}</td>
+          <td class="col-actions">
+            ${u.student_phone ? `<button class="btn btn-primary btn-sm unpaid-rem-btn" data-idx="${idx}">💬 Relancer WA</button>` : '<span class="subtitle">Pas de tél.</span>'}
+          </td>
+        </tr>`
+      )
+      .join("");
+    tbody.querySelectorAll(".unpaid-rem-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const u = items[Number(btn.dataset.idx)];
+        btn.disabled = true;
+        try {
+          await api("/api/payments/remind-whatsapp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              student_name: u.student_name,
+              phone: u.student_phone,
+              course_name: u.course_name,
+              remaining_balance: u.remaining_balance,
+            }),
+          });
+          toast(`Relance WhatsApp envoyée à ${u.student_name} !`, "success");
+        } catch (e) {
+          toast(e.message, "error");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  } catch {}
+}
+
+$("exportCashbookBtn")?.addEventListener("click", () => {
+  const wsId = state.workspaceId || 1;
+  const month = ($("payExportMonth")?.value || "").trim();
+  const qs = new URLSearchParams({ workspace_id: String(wsId) });
+  if (month) qs.set("month", month);
+  window.location.href = `/api/payments/export?${qs.toString()}`;
+});
+
 async function loadPayments() {
   if ($("payDate") && !$("payDate").value) {
     $("payDate").value = new Date().toISOString().slice(0, 10);
   }
   loadPaymentRegistrations();
+  loadUnpaidBalances();
   try {
     const q = ($("paySearchInput")?.value || "").trim();
     const wsId = state.workspaceId || 1;

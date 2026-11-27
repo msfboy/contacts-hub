@@ -428,8 +428,12 @@
           <!-- Embedded WhatsApp 2-Column Chat -->
           <div class="card wa-inbox" id="waInbox">
             <div class="wa-sidebar">
-              <div class="wa-sidebar-head">
+              <div class="wa-sidebar-head" style="display:flex;flex-direction:column;gap:6px;">
                 <input type="search" id="waConvSearch" class="input input-sm" placeholder="🔍 Rechercher discussion ou numéro…" />
+                <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;">
+                  <input type="checkbox" id="waUnreadOnlyToggle" />
+                  <span>🔵 Afficher uniquement les discussions sans réponse</span>
+                </label>
               </div>
               <div class="wa-conv-list" id="waConvList">
                 <div class="empty-cell" style="padding:24px 12px;">Aucune discussion synchronisée.<br/>Connectez WhatsApp ou cliquez sur 💬 sur un contact.</div>
@@ -451,11 +455,13 @@
                 </div>
               </div>
               <div class="wa-chat-composer">
-                <select id="waQuickTplSelect" class="select input-sm" style="max-width:155px;" title="Insérer un modèle">
-                  <option value="">✨ Modèle…</option>
+                <select id="waQuickTplSelect" class="select input-sm" style="max-width:150px;" title="Insérer un modèle (ou tapez /)">
+                  <option value="">✨ Modèle (/)</option>
                 </select>
-                <button class="btn btn-secondary btn-sm" id="waAiSuggestBtn" title="Générer une réponse commerciale intelligente">🤖 Suggérer IA</button>
-                <textarea id="waComposerInput" class="input" rows="2" placeholder="Écrivez votre message WhatsApp… (Entrée pour envoyer)"></textarea>
+                <button class="btn btn-secondary btn-sm" id="waAttachBtn" title="Envoyer une image ou un PDF sur WhatsApp">📎</button>
+                <input type="file" id="waAttachFile" class="hidden" accept=".jpg,.jpeg,.png,.webp,.pdf,.docx,.xlsx,.csv,.txt" />
+                <button class="btn btn-secondary btn-sm" id="waAiSuggestBtn" title="Générer une réponse commerciale intelligente">🤖 IA</button>
+                <textarea id="waComposerInput" class="input" rows="2" placeholder="Écrivez votre message… (tapez / pour un modèle, Entrée pour envoyer)"></textarea>
                 <button class="btn btn-primary" id="waSendMsgBtn">Envoyer ➤</button>
               </div>
             </div>
@@ -964,9 +970,13 @@
         <header class="page-header">
           <div>
             <h1>Suivi des Paiements & Reçus PDF</h1>
-            <p class="subtitle">Encaissez vos inscriptions (TMoney, Flooz, Espèces, Virement), suivez les restes à payer et envoyez le reçu officiel sur WhatsApp en 1 clic.</p>
+            <p class="subtitle">Encaissez vos inscriptions (TMoney, Flooz, Espèces, Virement), relancez les soldes impayés sur WhatsApp et exportez votre journal de caisse.</p>
           </div>
-          <button class="btn btn-secondary" id="refreshPaymentsBtn">↻ Actualiser</button>
+          <div class="header-actions">
+            <input type="month" id="payExportMonth" class="input input-sm" style="width:155px;" title="Filtrer le journal de caisse par mois (optionnel)" />
+            <button class="btn btn-secondary" id="exportCashbookBtn">📊 Journal de Caisse (Excel)</button>
+            <button class="btn btn-secondary" id="refreshPaymentsBtn">↻ Actualiser</button>
+          </div>
         </header>
 
         <div class="kpi-grid" style="margin-bottom:16px;">
@@ -1007,6 +1017,23 @@
           <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
             <button class="btn btn-primary" id="savePaymentBtn">🧾 Enregistrer le paiement & créer le reçu</button>
             <a id="lastReceiptDownloadBtn" class="btn btn-secondary hidden" href="#" target="_blank" rel="noopener noreferrer">⬇️ Télécharger le reçu signé (PDF)</a>
+          </div>
+        </div>
+
+        <!-- Unpaid Balances / 1-Click WhatsApp Reminder -->
+        <div class="card" style="padding:18px;margin-bottom:16px;border-left:4px solid #d97706;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <div>
+              <h3 style="margin:0;">⚠️ Relance Impayés &amp; Tranches restantes</h3>
+              <p class="subtitle" style="margin:2px 0 0;">Apprenants ayant un solde à régler — envoyez un rappel cordial WhatsApp en 1 clic.</p>
+            </div>
+            <span class="badge badge-st-followup" id="unpaidCountBadge">0 impayé(s)</span>
+          </div>
+          <div class="table-wrap" style="max-height:260px;overflow:auto;">
+            <table class="data-table">
+              <thead><tr><th>Apprenant</th><th>Formation</th><th>Déjà versé</th><th>Reste à payer</th><th class="col-actions">Relance</th></tr></thead>
+              <tbody id="unpaidBalancesTbody"><tr><td colspan="5" class="empty-cell">Aucun solde impayé 🎉</td></tr></tbody>
+            </table>
           </div>
         </div>
 
@@ -1892,6 +1919,15 @@ Virement</textarea></label>
             <button class="btn btn-primary btn-sm" id="genLicenseBtn">🔑 Générer une clé client signée</button>
             <input type="text" id="generatedLicenseOut" class="input input-sm hidden" readonly style="flex:1;min-width:240px;font-family:monospace;" />
             <button class="btn btn-secondary btn-sm hidden" id="copyLicenseBtn">📋 Copier</button>
+          </div>
+          <div style="margin-top:14px;">
+            <div style="font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:6px;">📋 Console Revendeur — Licences clients émises</div>
+            <div class="table-wrap" style="max-height:220px;overflow:auto;">
+              <table class="data-table">
+                <thead><tr><th>Client</th><th>Plan</th><th>Expiration</th><th>Statut</th><th class="col-actions">Actions</th></tr></thead>
+                <tbody id="issuedLicensesTbody"><tr><td colspan="5" class="empty-cell">Aucune licence client générée pour l'instant.</td></tr></tbody>
+              </table>
+            </div>
           </div>
         </div>
 

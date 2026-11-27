@@ -310,6 +310,30 @@ class ContactsHubTestSuite(unittest.TestCase):
         self.assertFalse(exp_ver["valid"])
         self.assertTrue(exp_ver.get("expired"))
 
+        # Reseller console history lists generated licenses
+        hist = licensing.list_issued_licenses()
+        self.assertGreaterEqual(len(hist), 2)
+
+    # --- 9. Unpaid Balances & Cashbook Excel Export ---
+    def test_11_unpaid_balances_and_cashbook_export(self):
+        p = payments_hub.create_payment({
+            "student_name": "Afi Partial",
+            "student_phone": "+22894445566",
+            "course_name": "Anglais Soir",
+            "total_fee": 35000,
+            "amount_paid": 15000,
+            "payment_method": "Flooz",
+            "payment_ref": "FL-PARTIAL-1",
+        })
+        self.assertTrue(p["ok"])
+        unpaid = payments_hub.list_unpaid_balances()
+        self.assertTrue(any(u["student_name"] == "Afi Partial" and u["remaining_balance"] == 20000 for u in unpaid))
+
+        r_exp = self.client.get("/api/payments/export")
+        self.assertEqual(r_exp.status_code, 200)
+        self.assertIn("spreadsheetml", r_exp.content_type)
+        self.assertGreater(len(r_exp.data), 500)
+
 
 if __name__ == "__main__":
     unittest.main()

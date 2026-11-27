@@ -55,7 +55,35 @@ def generate_license_key(
     b64 = base64.urlsafe_b64encode(raw_json).decode("ascii").rstrip("=")
     sig = hmac.new(_signing_secret(), b64.encode("ascii"), hashlib.sha256).hexdigest()[:16].upper()
     key = f"CHUB-{b64}.{sig}"
+    try:
+        with db.get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO issued_licenses (client_name, plan, exp_date, max_contacts, license_key, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (client, plan_clean, exp_str, payload["max_contacts"], key, datetime.now().isoformat(timespec="seconds")),
+            )
+    except Exception:
+        pass
     return {"ok": True, "license_key": key, "payload": payload}
+
+
+def list_issued_licenses(limit: int = 100) -> list:
+    with db.get_conn() as conn:
+        rows = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM issued_licenses ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        ]
+    for r in rows:
+        v = verify_license_key(r["license_key"])
+        r["valid"] = bool(v.get("valid"))
+        r["expired"] = bool(v.get("expired"))
+        r["days_left"] = v.get("days_left", 0)
+    return rows
 
 
 def verify_license_key(license_key: str) -> Dict[str, Any]:

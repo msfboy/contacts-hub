@@ -827,6 +827,27 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_seq_enroll_due ON sequence_enrollments(sequence_id, state, next_send_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_form_subs_form ON form_submissions(form_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_ws ON student_payments(workspace_id)")
+        # Auto-migrate reminder flags on appointments + issued_licenses table for SaaS Reseller Console
+        appt_cols = {r["name"] for r in conn.execute("PRAGMA table_info(appointments)").fetchall()}
+        if "reminded_j1" not in appt_cols:
+            conn.execute("ALTER TABLE appointments ADD COLUMN reminded_j1 INTEGER DEFAULT 0")
+        if "reminded_h2" not in appt_cols:
+            conn.execute("ALTER TABLE appointments ADD COLUMN reminded_h2 INTEGER DEFAULT 0")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS issued_licenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_name TEXT NOT NULL,
+                plan TEXT NOT NULL,
+                exp_date TEXT NOT NULL,
+                max_contacts INTEGER DEFAULT 25000,
+                license_key TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
         # Clean up legacy unresolved WhatsApp @lid ghost records (fake 14-15 digit numbers)
         conn.execute("DELETE FROM whatsapp_messages WHERE jid LIKE '%@lid' OR LENGTH(REPLACE(phone, '+', '')) >= 14")
         conn.execute("DELETE FROM whatsapp_contacts WHERE jid LIKE '%@lid' OR LENGTH(REPLACE(phone, '+', '')) >= 14")

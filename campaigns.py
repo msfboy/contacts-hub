@@ -565,6 +565,10 @@ def start_sequence_scheduler(interval_seconds: int = 45) -> None:
                     if ws_imap.get("host") and ws_imap.get("username") and ws_imap.get("password"):
                         check_replies_and_bounces(workspace_id=1)
                 process_due_sequences(max_batch=5, apply_delay=True)
+                # Every ~10 minutes, send automated J-1 / H-2 WhatsApp appointment reminders
+                if tick % 14 == 3:
+                    import booking_hub
+                    booking_hub.process_due_appointment_reminders()
             except Exception:
                 logger.exception("Erreur dans la boucle du scheduler de séquences")
 

@@ -23,7 +23,79 @@ ROLE_HINTS = (
     "chef de", "head of", "vp ", "lead ",
 )
 
+def _extract_contacts_gemini_vision(image_path: str) -> Optional[Dict[str, Any]]:
+    import base64
+    import json
+    import mimetypes
+    import requests
+    import ai_assistant
+
+    cfg = ai_assistant.get_ai_config(include_secret=True)
+    api_key = (
+        (cfg.get("api_key") if cfg.get("provider") == "gemini" else "")
+        or os.environ.get("GEMINI_API_KEY", "").strip()
+    )
+    if not api_key:
+        return None
+
+    mime, _ = mimetypes.guess_type(image_path)
+    if not mime or not mime.startswith("image/"):
+        mime = "image/jpeg"
+    with open(image_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("ascii")
+
+    prompt = (
+        "Extrais tous les contacts visibles sur cette carte de visite ou image. "
+        "Réponds UNIQUEMENT en JSON valide de la forme : "
+        '{"raw_text": "...", "contacts": [{"full_name": "", "email": "", "phone": "", "company": "", "role": ""}]} '
+        "sans balises markdown."
+    )
+    r = requests.post(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+        json={
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inlineData": {"mimeType": mime, "data": b64}},
+                ]
+            }]
+        },
+        timeout=25,
+    )
+    if r.status_code != 200:
+        return None
+    cands = r.json().get("candidates") or []
+    if not cands:
+        return None
+    txt = cands[0]["content"]["parts"][0]["text"].strip()
+    txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", txt, flags=re.IGNORECASE | re.DOTALL).strip()
+    parsed = json.loads(txt)
+    out_contacts = []
+    for c in parsed.get("contacts") or []:
+        em = (c.get("email") or "").strip().lower()
+        ph = (c.get("phone") or "").strip()
+        if not em and ph:
+            digits = re.sub(r"\D+", "", ph)
+            if len(digits) >= 7:
+                em = f"ocr.{digits}@card.local"
+        if em:
+            out_contacts.append({
+                "email": em,
+                "full_name": (c.get("full_name") or "").strip(),
+                "phone": ph,
+                "company": (c.get("company") or "").strip(),
+                "role": (c.get("role") or "").strip(),
+            })
+    return {"raw_text": parsed.get("raw_text") or "", "contacts": out_contacts, "engine": "gemini_vision"}
+
+
 def _run_windows_ocr(image_path: str) -> List[str]:
+    if os.name != "nt":
+        raise RuntimeError(
+            "L'OCR Windows n'est pas disponible sur serveur Linux. "
+            "Configurez une clé API Gemini dans IA Commerciale (ou GEMINI_API_KEY dans Railway) pour activer l'OCR Cloud Gemini Vision."
+        )
     proc = subprocess.run(
         [
             "powershell",
@@ -202,6 +274,15 @@ def extract_contacts_from_image(image_path: str) -> Dict[str, Any]:
     if not os.path.isfile(image_path):
         raise FileNotFoundError("Image introuvable.")
 
+    # 1. Try Cloud Gemini Vision OCR first (works on Railway Linux + mobile + Windows)
+    try:
+        gem = _extract_contacts_gemini_vision(image_path)
+        if gem is not None:
+            return gem
+    except Exception:
+        pass
+
+    # 2. Fallback to native Windows WinRT OCR on local Windows PCs
     lines = _run_windows_ocr(image_path)
     full_text = "\n".join(lines)
 

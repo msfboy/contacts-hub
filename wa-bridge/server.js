@@ -20,7 +20,7 @@ const AUTH_DIR = process.env.WA_BRIDGE_AUTH_DIR || path.join(__dirname, "auth_in
 
 const logger = pino({ level: "warn" });
 const app = express();
-app.use(express.json({ limit: "4mb" }));
+app.use(express.json({ limit: "16mb" }));
 
 // Block DNS rebinding & enforce shared Bearer token
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, "127.0.0.1", "localhost"]);
@@ -499,6 +499,44 @@ app.post("/send", async (req, res) => {
       phone: jidToPhone(jid),
       fromMe: true,
       body: text,
+      timestamp: ts,
+      pushName: meInfo?.name || "Moi",
+    };
+    storeMessage(norm);
+    notifyFlask({ event: "messages", messages: [norm] });
+    res.json({ ok: true, message: norm });
+  } catch (err) {
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
+
+app.post("/send-media", async (req, res) => {
+  if (connectionState !== "connected" || !sock) {
+    return res.status(400).json({ error: "WhatsApp n'est pas connecté. Scannez d'abord le QR Code." });
+  }
+  const rawPhone = req.body?.phone || "";
+  const jid = req.body?.jid ? jidNormalizedUser(String(req.body.jid)) : phoneToJid(rawPhone);
+  const b64 = String(req.body?.base64 || "").trim();
+  const mimetype = String(req.body?.mimetype || "application/octet-stream").trim();
+  const filename = String(req.body?.filename || "fichier").trim();
+  const caption = String(req.body?.caption || "").trim();
+  if (!jid || !b64) {
+    return res.status(400).json({ error: "Destinataire et fichier requis." });
+  }
+  try {
+    const buf = Buffer.from(b64, "base64");
+    const msgPayload = mimetype.startsWith("image/")
+      ? { image: buf, caption }
+      : { document: buf, mimetype, fileName: filename, caption };
+    const sent = await sock.sendMessage(jid, msgPayload);
+    const ts = Math.floor(Date.now() / 1000);
+    const label = mimetype.startsWith("image/") ? `📷 ${caption || filename}` : `📄 ${filename}${caption ? " — " + caption : ""}`;
+    const norm = {
+      id: sent?.key?.id || `outm_${ts}_${Math.random().toString(36).slice(2, 7)}`,
+      jid,
+      phone: jidToPhone(jid),
+      fromMe: true,
+      body: label,
       timestamp: ts,
       pushName: meInfo?.name || "Moi",
     };

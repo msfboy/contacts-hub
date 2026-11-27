@@ -316,6 +316,11 @@ def api_admin_license_status():
     return jsonify(licensing.get_current_license_status())
 
 
+@app.route("/api/admin/license/history", methods=["GET"])
+def api_admin_license_history():
+    return jsonify({"items": licensing.list_issued_licenses()})
+
+
 @app.route("/api/admin/license/generate", methods=["POST"])
 def api_admin_license_generate():
     data = request.get_json(silent=True) or {}
@@ -2452,6 +2457,40 @@ def api_wa_groups_import():
     return jsonify(res)
 
 
+@app.route("/api/wa/send-media", methods=["POST"])
+def api_wa_send_media():
+    import base64
+    f = request.files.get("file")
+    phone = (request.form.get("phone") or "").strip()
+    jid = (request.form.get("jid") or "").strip()
+    caption = (request.form.get("caption") or "").strip()
+    if not f or not (phone or jid):
+        return jsonify({"error": "Fichier et destinataire WhatsApp requis."}), 400
+    fname = os.path.basename(f.filename or "fichier")
+    ext = os.path.splitext(fname)[1].lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".pdf", ".docx", ".xlsx", ".csv", ".txt"):
+        return jsonify({"error": f"Format de fichier non autorisé ({ext}). Formats acceptés : JPG, PNG, PDF, DOCX, XLSX."}), 400
+    raw = f.read()
+    if len(raw) > 10 * 1024 * 1024:
+        return jsonify({"error": "Fichier trop volumineux pour WhatsApp (max 10 Mo)."}), 413
+    b64 = base64.b64encode(raw).decode("ascii")
+    res = wa_client.bridge_post(
+        "/send-media",
+        {
+            "phone": phone,
+            "jid": jid,
+            "caption": caption,
+            "filename": fname,
+            "mimetype": f.mimetype or "application/octet-stream",
+            "base64": b64,
+        },
+        timeout=30.0,
+    )
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error") or "Échec d'envoi du fichier WhatsApp."}), 400
+    return jsonify(res)
+
+
 @app.route("/api/wa/connect", methods=["POST"])
 def api_wa_connect():
     res = wa_client.bridge_post("/connect")
@@ -2728,6 +2767,40 @@ def api_payments_create():
 @app.route("/api/payments/<int:pid>", methods=["DELETE"])
 def api_payments_delete(pid: int):
     return jsonify(payments_hub.delete_payment(pid))
+
+
+@app.route("/api/payments/unpaid", methods=["GET"])
+def api_payments_unpaid():
+    ws_id = int(request.args.get("workspace_id") or _current_workspace_id())
+    return jsonify({"items": payments_hub.list_unpaid_balances(workspace_id=ws_id)})
+
+
+@app.route("/api/payments/remind-whatsapp", methods=["POST"])
+def api_payments_remind_wa():
+    data = request.get_json(silent=True) or {}
+    res = payments_hub.send_unpaid_reminder_wa(
+        student_name=data.get("student_name") or "",
+        phone=data.get("phone") or "",
+        course_name=data.get("course_name") or "",
+        remaining_balance=float(data.get("remaining_balance") or 0),
+        workspace_id=_current_workspace_id(),
+    )
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    return jsonify(res)
+
+
+@app.route("/api/payments/export", methods=["GET"])
+def api_payments_export():
+    ws_id = int(request.args.get("workspace_id") or _current_workspace_id())
+    month = (request.args.get("month") or "").strip()
+    raw_xlsx = payments_hub.export_cashbook_xlsx(workspace_id=ws_id, month=month)
+    fname = f"journal_caisse_{month or datetime.now().strftime('%Y%m%d')}.xlsx"
+    return Response(
+        raw_xlsx,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @app.route("/receipt/<int:pid>", methods=["GET"])

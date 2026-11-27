@@ -259,3 +259,115 @@ def send_receipt_via_whatsapp(pid: int, receipt_url: str) -> Dict[str, Any]:
     if not res.get("ok"):
         return {"ok": False, "error": res.get("error") or "WhatsApp non connecté. Scannez le QR Code d'abord."}
     return {"ok": True}
+
+
+def list_unpaid_balances(workspace_id: int = 1) -> List[Dict[str, Any]]:
+    data = list_payments(search="", workspace_id=workspace_id)
+    seen = set()
+    unpaid: List[Dict[str, Any]] = []
+    for r in data.get("items") or []:
+        rem = float(r.get("remaining_balance") or 0)
+        if rem <= 0:
+            continue
+        key = _student_course_key(r)
+        if key in seen:
+            continue
+        seen.add(key)
+        unpaid.append({
+            "payment_id": r["id"],
+            "student_name": r["student_name"],
+            "student_phone": r.get("student_phone") or "",
+            "student_email": r.get("student_email") or "",
+            "course_name": r["course_name"],
+            "effective_fee": float(r.get("effective_fee") or 0),
+            "cumulative_paid": float(r.get("cumulative_paid") or 0),
+            "remaining_balance": rem,
+            "last_paid_at": r.get("paid_at") or "",
+        })
+    unpaid.sort(key=lambda x: x["remaining_balance"], reverse=True)
+    return unpaid
+
+
+def send_unpaid_reminder_wa(
+    student_name: str,
+    phone: str,
+    course_name: str,
+    remaining_balance: float,
+    workspace_id: int = 1,
+) -> Dict[str, Any]:
+    if not phone:
+        return {"ok": False, "error": "Aucun numéro WhatsApp pour cet apprenant."}
+    ws = db.get_workspace(workspace_id)
+    currency = ws.get("currency") or "FCFA"
+    first = (student_name or "").strip().split(" ")[0] or "Cher apprenant"
+    msg = (
+        f"Bonjour {first} 👋\n"
+        f"Petit rappel amical de *{ws['name']}* concernant votre formation *{course_name}*.\n\n"
+        f"• Solde restant à régler : *{_fmt_money(remaining_balance, currency)}*\n"
+        f"• Moyens acceptés : TMoney, Flooz, Espèces ou Virement.\n\n"
+        f"Dès réception de votre règlement, nous vous transmettrons immédiatement votre reçu officiel signé ici sur WhatsApp. Merci ! 🙏"
+    )
+    res = wa_client.bridge_post("/send", {"phone": phone, "text": msg}, timeout=15.0)
+    if not res.get("ok"):
+        return {"ok": False, "error": res.get("error") or "WhatsApp non connecté."}
+    return {"ok": True}
+
+
+def export_cashbook_xlsx(workspace_id: int = 1, month: str = "") -> bytes:
+    import io
+    import openpyxl
+
+    ws_info = db.get_workspace(workspace_id)
+    currency = ws_info.get("currency") or "FCFA"
+    with db.get_conn() as conn:
+        if month and len(month) == 7:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM student_payments WHERE COALESCE(workspace_id, 1) = ? AND paid_at LIKE ? ORDER BY paid_at ASC, id ASC",
+                    (workspace_id, f"{month}%"),
+                ).fetchall()
+            ]
+        else:
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM student_payments WHERE COALESCE(workspace_id, 1) = ? ORDER BY paid_at ASC, id ASC",
+                    (workspace_id,),
+                ).fetchall()
+            ]
+
+    wb = openpyxl.Workbook()
+    sheet = wb.active
+    sheet.title = "Journal de Caisse"
+    sheet.append([
+        "Date", "N° Reçu", "Apprenant", "Téléphone", "Formation",
+        "Mode de paiement", "Référence", f"Montant versé ({currency})", f"Frais total ({currency})", "Notes",
+    ])
+    by_method: Dict[str, float] = {}
+    total_amt = 0.0
+    for r in rows:
+        amt = float(r.get("amount_paid") or 0)
+        total_amt += amt
+        m = r.get("payment_method") or "Autre"
+        by_method[m] = by_method.get(m, 0.0) + amt
+        sheet.append([
+            r.get("paid_at") or "",
+            r.get("receipt_num") or "",
+            r.get("student_name") or "",
+            r.get("student_phone") or "",
+            r.get("course_name") or "",
+            m,
+            r.get("payment_ref") or "",
+            amt,
+            float(r.get("total_fee") or 0),
+            r.get("notes") or "",
+        ])
+    sheet.append([])
+    sheet.append(["TOTAL ENCAISSÉ", "", "", "", "", "", "", total_amt, "", ""])
+    for m, val in by_method.items():
+        sheet.append([f"Sous-total {m}", "", "", "", "", m, "", val, "", ""])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
