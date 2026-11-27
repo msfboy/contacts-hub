@@ -144,6 +144,8 @@ campaigns.start_sequence_scheduler(interval_seconds=45)
 PUBLIC_PREFIXES = (
     "/healthz",
     "/landing",
+    "/privacy",
+    "/terms",
     "/license",
     "/uploads/",
     "/login",
@@ -1052,7 +1054,7 @@ def _gdrive_redirect_uri() -> str:
 @app.route("/api/gdrive/status", methods=["GET"])
 def api_gdrive_status():
     account = request.args.get("account") or None
-    st = gdrive_client.check_status(account=account)
+    st = gdrive_client.check_status(account=account, workspace_id=_active_ws_id())
     st["redirect_uri"] = _gdrive_redirect_uri()
     return jsonify(st)
 
@@ -1067,6 +1069,7 @@ def api_gdrive_oauth_start():
         )
     state_tok = secrets.token_urlsafe(24)
     session["gdrive_oauth_state"] = state_tok
+    session["gdrive_oauth_ws_id"] = _active_ws_id()
     url = gdrive_client.build_oauth_url(_gdrive_redirect_uri(), state_tok)
     return redirect(url)
 
@@ -1077,23 +1080,25 @@ def api_gdrive_oauth_callback():
     if err:
         return redirect("/?gdrive_error=" + err)
     expected_state = session.pop("gdrive_oauth_state", "") or ""
+    ws_id = int(session.pop("gdrive_oauth_ws_id", None) or _active_ws_id())
     provided_state = request.args.get("state") or ""
     if not expected_state or not provided_state or not hmac.compare_digest(provided_state, expected_state):
         return Response("État OAuth invalide ou expiré. Réessayez.", status=400)
     code = (request.args.get("code") or "").strip()
     if not code:
         return Response("Code OAuth manquant.", status=400)
-    ok, info = gdrive_client.exchange_oauth_code(code, _gdrive_redirect_uri())
+    ok, info = gdrive_client.exchange_oauth_code(code, _gdrive_redirect_uri(), workspace_id=ws_id)
     if not ok:
         return Response(f"Échec connexion Google Drive : {info}", status=400)
-    _log_audit("gdrive_oauth", f"Google Drive connecté ({info})")
+    _log_audit("gdrive_oauth", f"Google Drive connecté WS#{ws_id} ({info})")
     return redirect("/?gdrive=connected")
 
 
 @app.route("/api/gdrive/oauth/disconnect", methods=["POST"])
 def api_gdrive_oauth_disconnect():
-    gdrive_client.disconnect_oauth()
-    _log_audit("gdrive_oauth", "Google Drive déconnecté")
+    ws_id = _active_ws_id()
+    gdrive_client.disconnect_oauth(workspace_id=ws_id)
+    _log_audit("gdrive_oauth", f"Google Drive déconnecté WS#{ws_id}")
     return jsonify({"ok": True})
 
 
@@ -1105,7 +1110,7 @@ def api_gdrive_import_link():
     if not url:
         return jsonify({"error": "Collez un lien Google Sheets ou Google Drive."}), 400
     dest_dir = os.path.join(IMPORTS_DIR, "gdrive_links")
-    ok, local_path, fname, err = gdrive_client.download_from_link(url, dest_dir)
+    ok, local_path, fname, err = gdrive_client.download_from_link(url, dest_dir, workspace_id=_active_ws_id())
     if not ok:
         return jsonify({"error": err}), 400
     try:
@@ -1116,6 +1121,7 @@ def api_gdrive_import_link():
             source_name=fname,
             source_ref=url[:180],
             extra_tag=extra_tag,
+            workspace_id=_active_ws_id(),
         )
         enrichment.run_auto_enrichment()
         return jsonify({"ok": True, "filename": fname, "summary": summary})
@@ -1130,7 +1136,7 @@ def api_gdrive_files():
     file_type = request.args.get("type", "").strip()
     account = request.args.get("account") or None
     ok, items, err = gdrive_client.list_files(
-        folder_id=folder_id, query=q, file_type=file_type, max_results=100, account=account
+        folder_id=folder_id, query=q, file_type=file_type, max_results=100, account=account, workspace_id=_active_ws_id()
     )
     if not ok:
         return jsonify({"error": err, "items": []}), 500
@@ -1149,12 +1155,13 @@ def api_gdrive_import():
     results = []
     errors = []
     dest_dir = os.path.join(IMPORTS_DIR, "gdrive")
+    ws_id = _active_ws_id()
 
     for f in files:
         fid = f.get("id")
         name = f.get("name") or fid
         mime = f.get("mimeType") or ""
-        ok, local_path, err = gdrive_client.download_file(fid, name, mime, dest_dir, account=account)
+        ok, local_path, err = gdrive_client.download_file(fid, name, mime, dest_dir, account=account, workspace_id=ws_id)
         if not ok:
             errors.append({"name": name, "error": err})
             continue
@@ -1166,6 +1173,7 @@ def api_gdrive_import():
                 source_name=name,
                 source_ref=fid,
                 extra_tag=extra_tag,
+                workspace_id=ws_id,
             )
             results.append(summary)
         except Exception as exc:
@@ -1194,7 +1202,7 @@ def api_backup_gdrive():
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = os.path.join(BACKUPS_DIR, f"contactshub_backup_{stamp}.db")
     db.create_hot_backup(backup_path)
-    ok, out, err = gdrive_client.upload_backup(backup_path, account=account)
+    ok, out, err = gdrive_client.upload_backup(backup_path, account=account, workspace_id=_active_ws_id())
     if not ok:
         return jsonify({"error": err}), 500
     return jsonify({"ok": True, "filename": os.path.basename(backup_path), "output": out})
@@ -4127,6 +4135,30 @@ def api_event_remind_pending(event_id: int):
     if not res.get("ok"):
         return jsonify(res), 400
     return jsonify(res)
+
+
+@app.route("/privacy", methods=["GET"])
+def legal_privacy_page():
+    ws = db.get_workspace(_active_ws_id())
+    return render_template(
+        "legal.html",
+        doc_kind="privacy",
+        page_title="Politique de Confidentialité & Protection des Données",
+        workspace=ws,
+        updated_date=datetime.now().strftime("%d/%m/%Y"),
+    )
+
+
+@app.route("/terms", methods=["GET"])
+def legal_terms_page():
+    ws = db.get_workspace(_active_ws_id())
+    return render_template(
+        "legal.html",
+        doc_kind="terms",
+        page_title="Conditions Générales d'Utilisation (CGU)",
+        workspace=ws,
+        updated_date=datetime.now().strftime("%d/%m/%Y"),
+    )
 
 
 if __name__ == "__main__":

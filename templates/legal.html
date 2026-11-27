@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ page_title }} — {{ workspace.name }}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #f8fafc;
+      color: #0f172a;
+      line-height: 1.65;
+    }
+    .topbar {
+      background: #0f172a;
+      color: #fff;
+      padding: 18px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .topbar a { color: #93c5fd; text-decoration: none; font-weight: 600; font-size: 13.5px; }
+    .wrap { max-width: 860px; margin: 32px auto; padding: 0 18px 48px; }
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 32px;
+      box-shadow: 0 6px 24px rgba(15, 23, 42, 0.05);
+    }
+    h1 { margin: 0 0 6px; font-size: 26px; }
+    h2 { margin: 24px 0 8px; font-size: 17px; color: #1e3a8a; }
+    p, li { font-size: 14.5px; color: #334155; }
+    .meta { font-size: 12.5px; color: #64748b; margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <strong>{{ workspace.name }} — ContactsHub SaaS</strong>
+    <div style="display:flex;gap:16px;">
+      <a href="/landing">Accueil</a>
+      <a href="/privacy">Confidentialité</a>
+      <a href="/terms">Conditions d'utilisation</a>
+    </div>
+  </header>
+  <main class="wrap">
+    <div class="card">
+      <h1>{{ page_title }}</h1>
+      <div class="meta">Dernière mise à jour : {{ updated_date }} · Éditeur : {{ workspace.name }}</div>
+
+      {% if doc_kind == 'privacy' %}
+        <h2>1. Collecte &amp; Finalité des Données</h2>
+        <p>ContactsHub permet aux entreprises, centres de formation et professionnels de centraliser leurs contacts clients/prospects, gérer leur pipeline CRM, leurs inscriptions, leurs devis, leurs paiements et leurs communications (Email &amp; WhatsApp).</p>
+
+        <h2>2. Utilisation des API Google (Google API Services User Data Policy)</h2>
+        <p>Lorsque vous connectez volontairement votre compte <strong>Google Drive</strong> via OAuth 2.0 :</p>
+        <ul>
+          <li>ContactsHub accède uniquement aux fichiers que vous consultez ou choisissez d'importer pour extraire vos contacts professionnels, ainsi qu'à la sauvegarde chiffrée de votre base lorsque vous cliquez sur « Backup Drive ».</li>
+          <li>Vos jetons d'accès Google OAuth sont chiffrés en base de données (Fernet/AES) et <strong>strictement isolés par espace client (workspace)</strong>.</li>
+          <li>Aucune donnée issue de Google Drive n'est vendue, partagée avec des tiers publicitaires, ni utilisée pour entraîner des modèles d'IA externes.</li>
+          <li>Vous pouvez révoquer l'accès à tout moment en 1 clic depuis l'onglet <em>Google Drive → Déconnecter</em> ou depuis les paramètres de sécurité de votre compte Google.</li>
+        </ul>
+
+        <h2>3. Sécurité, Hébergement &amp; Droits RGPD</h2>
+        <p>Toutes les communications sont chiffrées en HTTPS/TLS. Les mots de passe sont hachés (PBKDF2-SHA256) et les secrets chiffrés. Chaque utilisateur dispose d'un droit d'accès, de rectification, de portabilité (export CSV/Excel/JSON) et d'oubli complet (suppression définitive RGPD intégrée).</p>
+
+        <h2>4. Contact</h2>
+        <p>Pour toute demande relative à vos données personnelles, contactez l'administrateur de votre espace <strong>{{ workspace.name }}</strong>.</p>
+      {% else %}
+        <h2>1. Objet du Service</h2>
+        <p>Les présentes Conditions Générales d'Utilisation (CGU) régissent l'accès et l'utilisation de la plateforme SaaS <strong>ContactsHub</strong> éditée par <strong>{{ workspace.name }}</strong>.</p>
+
+        <h2>2. Compte, Licences &amp; Essai Gratuit</h2>
+        <p>L'accès à la plateforme peut être soumis à une clé de licence (essai gratuit 7 jours, Starter, Pro ou Enterprise). Chaque espace de travail dispose de ses propres données isolées. L'utilisateur est responsable de la confidentialité de ses identifiants.</p>
+
+        <h2>3. Usage Responsable (Emailing &amp; WhatsApp)</h2>
+        <p>L'utilisateur s'engage à respecter les réglementations applicables en matière de prospection commerciale (consentement, respect des demandes de désinscription <code>STOP</code> et liens de désabonnement intégrés) et à ne pas utiliser le service pour du spam illicite.</p>
+
+        <h2>4. Propriété des Données &amp; Sauvegardes</h2>
+        <p>Vous restez à 100 % propriétaire de vos contacts, devis, reçus et documents. Vous pouvez exporter ou sauvegarder votre base de données à tout moment en un clic.</p>
+
+        <h2>5. Disponibilité &amp; Support</h2>
+        <p>L'éditeur met tout en œuvre pour assurer une disponibilité continue du service SaaS et fournit un support technique selon le plan souscrit.</p>
+      {% endif %}
+    </div>
+  </main>
+</body>
+</html>

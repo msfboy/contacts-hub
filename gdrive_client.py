@@ -36,10 +36,18 @@ def is_oauth_configured() -> bool:
     return bool(cid and csec)
 
 
-def _load_oauth_tokens() -> Dict[str, Any]:
+def _oauth_key(workspace_id: int = 1) -> str:
+    return f"gdrive_oauth_tokens_ws_{int(workspace_id or 1)}"
+
+
+def _load_oauth_tokens(workspace_id: int = 1) -> Dict[str, Any]:
+    ws_id = int(workspace_id or 1)
     try:
         with db.get_conn() as conn:
-            row = conn.execute("SELECT value FROM app_settings WHERE key = 'gdrive_oauth_tokens'").fetchone()
+            row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (_oauth_key(ws_id),)).fetchone()
+            # Backward-compatible fallback for workspace 1 (preserves existing Railway connection)
+            if (not row or not row["value"]) and ws_id == 1:
+                row = conn.execute("SELECT value FROM app_settings WHERE key = 'gdrive_oauth_tokens'").fetchone()
             if row and row["value"]:
                 raw = db.decrypt_secret(row["value"])
                 if raw:
@@ -51,19 +59,23 @@ def _load_oauth_tokens() -> Dict[str, Any]:
     return {}
 
 
-def _save_oauth_tokens(tokens: Dict[str, Any]) -> None:
+def _save_oauth_tokens(tokens: Dict[str, Any], workspace_id: int = 1) -> None:
+    ws_id = int(workspace_id or 1)
     enc = db.encrypt_secret(json.dumps(tokens, ensure_ascii=False))
     with db.get_conn() as conn:
         conn.execute(
-            "INSERT INTO app_settings (key, value) VALUES ('gdrive_oauth_tokens', ?) "
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (enc,),
+            (_oauth_key(ws_id), enc),
         )
 
 
-def disconnect_oauth() -> None:
+def disconnect_oauth(workspace_id: int = 1) -> None:
+    ws_id = int(workspace_id or 1)
     with db.get_conn() as conn:
-        conn.execute("DELETE FROM app_settings WHERE key = 'gdrive_oauth_tokens'")
+        conn.execute("DELETE FROM app_settings WHERE key = ?", (_oauth_key(ws_id),))
+        if ws_id == 1:
+            conn.execute("DELETE FROM app_settings WHERE key = 'gdrive_oauth_tokens'")
 
 
 def build_oauth_url(redirect_uri: str, state: str) -> str:
@@ -82,7 +94,7 @@ def build_oauth_url(redirect_uri: str, state: str) -> str:
     return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
 
 
-def exchange_oauth_code(code: str, redirect_uri: str) -> Tuple[bool, str]:
+def exchange_oauth_code(code: str, redirect_uri: str, workspace_id: int = 1) -> Tuple[bool, str]:
     cid, csec = _oauth_client_config()
     if not cid or not csec:
         return False, "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET manquants."
@@ -104,7 +116,7 @@ def exchange_oauth_code(code: str, redirect_uri: str) -> Tuple[bool, str]:
 
         access_token = data["access_token"]
         expires_in = int(data.get("expires_in") or 3600)
-        existing = _load_oauth_tokens()
+        existing = _load_oauth_tokens(workspace_id)
         refresh_token = data.get("refresh_token") or existing.get("refresh_token") or ""
 
         email = existing.get("email") or ""
@@ -124,14 +136,14 @@ def exchange_oauth_code(code: str, redirect_uri: str) -> Tuple[bool, str]:
             "refresh_token": refresh_token,
             "expires_at": int(time.time()) + expires_in - 60,
             "email": email,
-        })
+        }, workspace_id=workspace_id)
         return True, email
     except Exception as exc:
         return False, str(exc)
 
 
-def _get_valid_access_token() -> Optional[str]:
-    toks = _load_oauth_tokens()
+def _get_valid_access_token(workspace_id: int = 1) -> Optional[str]:
+    toks = _load_oauth_tokens(workspace_id)
     if not toks:
         return None
     if toks.get("access_token") and int(toks.get("expires_at") or 0) > int(time.time()):
@@ -160,7 +172,7 @@ def _get_valid_access_token() -> Optional[str]:
             return None
         toks["access_token"] = new_at
         toks["expires_at"] = int(time.time()) + int(data.get("expires_in") or 3600) - 60
-        _save_oauth_tokens(toks)
+        _save_oauth_tokens(toks, workspace_id=workspace_id)
         return new_at
     except Exception:
         return None
@@ -205,10 +217,10 @@ def _run_gdrive(
     return True, out, ""
 
 
-def check_status(account: Optional[str] = None) -> Dict[str, Any]:
+def check_status(account: Optional[str] = None, workspace_id: int = 1) -> Dict[str, Any]:
     oauth_cfg = is_oauth_configured()
-    toks = _load_oauth_tokens()
-    if toks and _get_valid_access_token():
+    toks = _load_oauth_tokens(workspace_id)
+    if toks and _get_valid_access_token(workspace_id):
         return {
             "connected": True,
             "mode": "oauth",
@@ -291,6 +303,7 @@ def list_files(
     file_type: str = "",
     max_results: int = 80,
     account: Optional[str] = None,
+    workspace_id: int = 1,
 ) -> Tuple[bool, List[Dict[str, Any]], str]:
     try:
         folder_id = _validate_drive_id(folder_id, "folder_id")
@@ -301,7 +314,7 @@ def list_files(
     max_results = max(1, min(200, int(max_results or 80)))
 
     # 1. Google Drive REST API v3 (OAuth2)
-    token = _get_valid_access_token()
+    token = _get_valid_access_token(workspace_id)
     if token:
         clauses = ["trashed = false"]
         if folder_id:
@@ -365,6 +378,7 @@ def download_file(
     mime_type: str,
     dest_dir: str,
     account: Optional[str] = None,
+    workspace_id: int = 1,
 ) -> Tuple[bool, str, str]:
     try:
         file_id = _validate_drive_id(file_id, "file_id") or ""
@@ -375,7 +389,7 @@ def download_file(
     base = _safe_filename(name)
 
     # 1. Google Drive REST API v3 (OAuth2)
-    token = _get_valid_access_token()
+    token = _get_valid_access_token(workspace_id)
     if token:
         headers = {"Authorization": f"Bearer {token}"}
         try:
@@ -427,7 +441,7 @@ def download_file(
     return ok, out_path, err
 
 
-def download_from_link(url: str, dest_dir: str) -> Tuple[bool, str, str, str]:
+def download_from_link(url: str, dest_dir: str, workspace_id: int = 1) -> Tuple[bool, str, str, str]:
     """Download a Google Sheets or Google Drive shared link (works public OR private if OAuth2 connected)."""
     raw = (url or "").strip()
     parsed = urllib.parse.urlparse(raw)
@@ -459,10 +473,10 @@ def download_from_link(url: str, dest_dir: str) -> Tuple[bool, str, str, str]:
         return False, "", "", "Impossible d'extraire l'identifiant du fichier depuis ce lien Google."
 
     # If OAuth2 is connected, use Drive API directly (supports private files!)
-    if _get_valid_access_token():
+    if _get_valid_access_token(workspace_id):
         mime = GOOGLE_SHEET_MIME if kind == "sheet" else (GOOGLE_DOC_MIME if kind == "doc" else "")
         fname = f"google_{kind}_{file_id[:8]}"
-        ok, path, err = download_file(file_id, fname, mime, dest_dir)
+        ok, path, err = download_file(file_id, fname, mime, dest_dir, workspace_id=workspace_id)
         return ok, path, fname, err
 
     # Otherwise fetch public export URL
@@ -507,8 +521,9 @@ def download_from_link(url: str, dest_dir: str) -> Tuple[bool, str, str, str]:
 def upload_backup(
     local_file_path: str,
     account: Optional[str] = None,
+    workspace_id: int = 1,
 ) -> Tuple[bool, str, str]:
-    token = _get_valid_access_token()
+    token = _get_valid_access_token(workspace_id)
     if token:
         try:
             fname = os.path.basename(local_file_path)

@@ -560,6 +560,30 @@ class ContactsHubTestSuite(unittest.TestCase):
         self.assertTrue(ci2["ok"])
         self.assertTrue(ci2["already_checked_in"])
 
+    # --- 15. Multi-Tenant Google Drive Isolation & Legal Pages (/privacy, /terms) ---
+    def test_17_gdrive_workspace_isolation_and_legal_pages(self):
+        import gdrive_client
+
+        gdrive_client._save_oauth_tokens({"access_token": "tok_ws1", "email": "ws1@example.com", "expires_at": 9999999999}, workspace_id=1)
+        gdrive_client._save_oauth_tokens({"access_token": "tok_ws2", "email": "ws2@example.com", "expires_at": 9999999999}, workspace_id=2)
+
+        t1 = gdrive_client._load_oauth_tokens(workspace_id=1)
+        t2 = gdrive_client._load_oauth_tokens(workspace_id=2)
+        self.assertEqual(t1["email"], "ws1@example.com")
+        self.assertEqual(t2["email"], "ws2@example.com")
+
+        gdrive_client.disconnect_oauth(workspace_id=2)
+        self.assertEqual(gdrive_client._load_oauth_tokens(workspace_id=2), {})
+        self.assertEqual(gdrive_client._load_oauth_tokens(workspace_id=1)["email"], "ws1@example.com")
+
+        r_priv = self.client.get("/privacy")
+        self.assertEqual(r_priv.status_code, 200)
+        self.assertIn("Google API Services", r_priv.get_data(as_text=True))
+
+        r_terms = self.client.get("/terms")
+        self.assertEqual(r_terms.status_code, 200)
+        self.assertIn("Conditions Générales", r_terms.get_data(as_text=True))
+
 
 if __name__ == "__main__":
     unittest.main()
