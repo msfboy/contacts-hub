@@ -25,6 +25,7 @@ import connectors
 import db
 import enrichment
 import gdrive_client
+import licensing
 import local_radar
 import net_guard
 import parsers
@@ -122,6 +123,8 @@ campaigns.start_sequence_scheduler(interval_seconds=45)
 
 PUBLIC_PREFIXES = (
     "/healthz",
+    "/landing",
+    "/license",
     "/login",
     "/logout",
     "/static/",
@@ -208,6 +211,14 @@ def _enforce_security_and_auth():
     if SAAS_MODE and path.startswith(("/api/local/", "/api/watchers", "/api/preview/local")):
         return jsonify({"error": "Explorateur disque local désactivé en mode SaaS Cloud."}), 403
 
+    # 0b. Optional SaaS license enforcement for paid client instances (CONTACTSHUB_REQUIRE_LICENSE=1)
+    if licensing.is_license_required() and not any(path.startswith(p) for p in PUBLIC_PREFIXES):
+        lic = licensing.get_current_license_status()
+        if not lic.get("valid"):
+            if path.startswith("/api/"):
+                return jsonify({"error": lic.get("error") or "Licence expirée ou manquante.", "license_required": True}), 402
+            return redirect(url_for("license_page"))
+
     # 1. CSRF protection on state-changing requests (exempt signed webhooks & public forms)
     if request.method in ("POST", "PUT", "DELETE", "PATCH"):
         if not any(path.startswith(p) for p in CSRF_EXEMPT_PREFIXES):
@@ -276,6 +287,60 @@ def _handle_500(_exc):
 @app.route("/healthz", methods=["GET"])
 def healthz():
     return jsonify({"status": "ok", "mode": "saas" if SAAS_MODE else "local"})
+
+
+@app.route("/landing", methods=["GET"])
+def public_landing_page():
+    ws = db.get_workspace(1)
+    return render_template("landing.html", workspace=ws)
+
+
+@app.route("/license", methods=["GET", "POST"])
+def license_page():
+    error = None
+    success = False
+    if request.method == "POST":
+        key = (request.form.get("license_key") or "").strip()
+        res = licensing.save_license_key(key)
+        if res.get("ok"):
+            success = True
+            _log_audit("license_activate", f"Licence activée ({res['status'].get('client', '')})")
+        else:
+            error = res.get("error") or "Clé invalide."
+    status = licensing.get_current_license_status()
+    return render_template("license.html", status=status, error=error, success=success)
+
+
+@app.route("/api/admin/license", methods=["GET"])
+def api_admin_license_status():
+    return jsonify(licensing.get_current_license_status())
+
+
+@app.route("/api/admin/license/generate", methods=["POST"])
+def api_admin_license_generate():
+    data = request.get_json(silent=True) or {}
+    try:
+        res = licensing.generate_license_key(
+            client_name=data.get("client_name") or "Nouveau Client",
+            plan=data.get("plan") or "pro",
+            days=int(data.get("days") or 30),
+            expires_on=data.get("expires_on") or None,
+            max_contacts=int(data.get("max_contacts") or 25000),
+        )
+        _log_audit("license_generate", f"Clé générée pour {res['payload']['client']} ({res['payload']['plan']}, exp {res['payload']['exp']})")
+        return jsonify(res)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/admin/license/activate", methods=["POST"])
+def api_admin_license_activate():
+    data = request.get_json(silent=True) or {}
+    res = licensing.save_license_key(data.get("license_key") or "")
+    if not res.get("ok"):
+        return jsonify({"error": res.get("error")}), 400
+    _log_audit("license_activate", f"Licence activée ({res['status'].get('client', '')})")
+    return jsonify(res)
 
 
 @app.route("/login", methods=["GET", "POST"])

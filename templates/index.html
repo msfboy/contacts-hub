@@ -1862,6 +1862,39 @@ Virement</textarea></label>
           </div>
         </header>
 
+        <!-- SaaS Licenses, Subscriptions & Commercial Landing Page -->
+        <div class="card" style="padding:18px;margin-bottom:16px;background:#f8fafc;border:1px solid #cbd5e1;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+            <div>
+              <h3 style="margin:0 0 4px;">🔑 Licences SaaS, Abonnements Clients &amp; Page Vitrine</h3>
+              <p class="subtitle" id="adminLicenseSummary">Vérification de la licence de cette instance…</p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <a class="btn btn-secondary btn-sm" href="/landing" target="_blank" rel="noopener noreferrer">🌐 Voir la page vitrine (/landing)</a>
+              <a class="btn btn-secondary btn-sm" href="/license" target="_blank" rel="noopener noreferrer">🔑 Page d'activation (/license)</a>
+            </div>
+          </div>
+          <div class="form-grid">
+            <label class="field"><span>Nom du client / entreprise</span><input type="text" id="licClientName" class="input" placeholder="Ex: Institut Excellence Lomé" /></label>
+            <label class="field">
+              <span>Formule / Plan</span>
+              <select id="licPlan" class="select">
+                <option value="starter">Starter (15 000 FCFA/mois)</option>
+                <option value="pro" selected>Pro Académie &amp; PME (30 000 FCFA/mois)</option>
+                <option value="business">Business &amp; Multi-Sites (55 000 FCFA/mois)</option>
+                <option value="lifetime">Licence À Vie (Lifetime)</option>
+              </select>
+            </label>
+            <label class="field"><span>Durée de validité (jours)</span><input type="number" id="licDays" class="input" value="30" min="1" max="3650" /></label>
+            <label class="field"><span>Quota contacts max</span><input type="number" id="licMaxContacts" class="input" value="25000" min="100" step="500" /></label>
+          </div>
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm" id="genLicenseBtn">🔑 Générer une clé client signée</button>
+            <input type="text" id="generatedLicenseOut" class="input input-sm hidden" readonly style="flex:1;min-width:240px;font-family:monospace;" />
+            <button class="btn btn-secondary btn-sm hidden" id="copyLicenseBtn">📋 Copier</button>
+          </div>
+        </div>
+
         <!-- SaaS Multi-Tenant & White-Label Branding -->
         <div class="card" style="padding:18px;margin-bottom:16px;">
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">

@@ -25,6 +25,7 @@ import campaigns  # noqa: E402
 import db  # noqa: E402
 import enrichment  # noqa: E402
 import gdrive_client  # noqa: E402
+import licensing  # noqa: E402
 import net_guard  # noqa: E402
 import parsers  # noqa: E402
 import payments_hub  # noqa: E402
@@ -284,6 +285,30 @@ class ContactsHubTestSuite(unittest.TestCase):
         with db.get_conn() as conn:
             self.assertIsNone(conn.execute("SELECT id FROM contacts WHERE email = 'kodjo.inscrit@example.tg'").fetchone())
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM form_submissions WHERE email = 'kodjo.inscrit@example.tg'").fetchone()[0], 0)
+
+    # --- 8. Commercial Landing Page & Signed SaaS Licensing ---
+    def test_10_landing_and_licensing(self):
+        r_land = self.client.get("/landing")
+        self.assertEqual(r_land.status_code, 200)
+        self.assertIn("ContactsHub SaaS", r_land.get_data(as_text=True))
+
+        gen = licensing.generate_license_key("Institut Test", plan="pro", days=30)
+        key = gen["license_key"]
+        self.assertTrue(key.startswith("CHUB-"))
+
+        ver = licensing.verify_license_key(key)
+        self.assertTrue(ver["valid"])
+        self.assertEqual(ver["client"], "Institut Test")
+
+        # Tampered key must fail
+        bad = licensing.verify_license_key(key[:-4] + "FFFF")
+        self.assertFalse(bad["valid"])
+
+        # Expired key must fail
+        exp_gen = licensing.generate_license_key("Client Expiré", plan="starter", expires_on="2020-01-01")
+        exp_ver = licensing.verify_license_key(exp_gen["license_key"])
+        self.assertFalse(exp_ver["valid"])
+        self.assertTrue(exp_ver.get("expired"))
 
 
 if __name__ == "__main__":

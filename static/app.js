@@ -3510,7 +3510,60 @@ async function loadFormSubmissions(fid) {
 
 // ---------------- ADMIN, SECURITY, GDPR & AUDIT ----------------
 
+async function loadAdminLicense() {
+  try {
+    const lic = await api("/api/admin/license");
+    const el = $("adminLicenseSummary");
+    if (!el) return;
+    if (lic.valid) {
+      const expTxt = lic.exp === "lifetime" || lic.exp === "illimité" ? "Illimité" : `Expire le ${lic.exp} (${lic.days_left} j restants)`;
+      el.innerHTML = `<span class="badge badge-st-client">✅ Active</span> <strong>${esc(lic.client || "Instance")}</strong> · Plan <code>${esc(lic.plan || "owner")}</code> · ${esc(expTxt)}`;
+    } else {
+      el.innerHTML = `<span class="badge badge-st-unsubscribed">⚠️ Expirée / Inactive</span> ${esc(lic.error || "")}`;
+    }
+  } catch {}
+}
+
+$("genLicenseBtn")?.addEventListener("click", async () => {
+  try {
+    const res = await api("/api/admin/license/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_name: $("licClientName")?.value?.trim() || "Client ContactsHub",
+        plan: $("licPlan")?.value || "pro",
+        days: Number($("licDays")?.value || 30),
+        max_contacts: Number($("licMaxContacts")?.value || 25000),
+      }),
+    });
+    const out = $("generatedLicenseOut");
+    const copyBtn = $("copyLicenseBtn");
+    if (out) {
+      out.value = res.license_key || "";
+      out.classList.remove("hidden");
+    }
+    copyBtn?.classList.remove("hidden");
+    toast(`Clé générée pour ${res.payload?.client} (expire : ${res.payload?.exp}) !`, "success");
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
+
+$("copyLicenseBtn")?.addEventListener("click", async () => {
+  const val = $("generatedLicenseOut")?.value || "";
+  if (!val) return;
+  try {
+    await navigator.clipboard.writeText(val);
+    toast("Clé de licence copiée !", "success");
+  } catch {
+    $("generatedLicenseOut")?.select();
+    document.execCommand("copy");
+    toast("Clé copiée !", "success");
+  }
+});
+
 async function loadAdmin() {
+  loadAdminLicense();
   try {
     const data = await api("/api/admin/status");
     $("authEnabledToggle").checked = Boolean(data.auth_enabled);
