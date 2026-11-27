@@ -153,6 +153,85 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// SaaS Mode UI adaptations: hide host-PC-only tabs & default to Drag-and-Drop Upload
+(function applySaasUiAdaptations() {
+  const isSaas = document.querySelector('meta[name="saas-mode"]')?.getAttribute("content") === "1";
+  if (!isSaas) return;
+  const localNavBtn = document.querySelector('.nav-item[data-tab="local"]');
+  if (localNavBtn) {
+    const lbl = localNavBtn.querySelector("span:nth-child(2)");
+    if (lbl) lbl.textContent = "Importer fichiers";
+  }
+  document.querySelectorAll('[data-subtab="pc-browser"], [data-subtab="pc-watchers"]').forEach((b) => b.classList.add("hidden"));
+  $("subtab-pc-browser")?.classList.remove("active");
+  $("subtab-pc-watchers")?.classList.remove("active");
+  const upTab = document.querySelector('[data-subtab="pc-upload"]');
+  if (upTab) {
+    upTab.classList.add("active");
+    $("subtab-pc-upload")?.classList.add("active");
+  }
+})();
+
+// Direct Workspace Logo Upload (stored in /data/uploads/)
+$("uploadWsLogoBtn")?.addEventListener("click", () => $("wsLogoFileInput")?.click());
+$("wsLogoFileInput")?.addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append("file", file);
+  const btn = $("uploadWsLogoBtn");
+  if (btn) btn.disabled = true;
+  try {
+    const res = await api("/api/admin/workspace/logo", { method: "POST", body: fd });
+    if ($("wsLogoUrl")) $("wsLogoUrl").value = res.logo_url;
+    toast("Logo importé et appliqué avec succès !", "success");
+    loadStats();
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    if (btn) btn.disabled = false;
+    e.target.value = "";
+  }
+});
+
+// Printable QR Code Modal Helper for /landing, /rdv, /f/<slug>
+function openQrPopup(title, path) {
+  const base = ($("wsPublicBaseUrl")?.value || window.location.origin).replace(/\/+$/, "");
+  const fullUrl = path.startsWith("http") ? path : `${base}${path}`;
+  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(fullUrl)}`;
+  const win = window.open("", "_blank", "width=420,height=520");
+  if (!win) return toast("Autorisez les popups pour afficher le QR Code.", "error");
+  win.document.write(
+    `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>QR Code — ${esc(title)}</title>` +
+    `<style>body{font-family:Segoe UI,sans-serif;text-align:center;padding:28px;color:#0f172a;}img{border:1px solid #cbd5e1;border-radius:12px;padding:10px;background:#fff;}code{display:block;margin:12px 0;font-size:12px;word-break:break-all;color:#334155;}button{padding:10px 18px;border:0;border-radius:8px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer;}@media print{button{display:none;}}</style></head>` +
+    `<body><h2>${esc(title)}</h2><img src="${qrSrc}" alt="QR Code" width="260" height="260" /><code>${esc(fullUrl)}</code><button onclick="window.print()">🖨️ Imprimer / PDF</button></body></html>`
+  );
+  win.document.close();
+}
+$("showLandingQrBtn")?.addEventListener("click", () => openQrPopup("Page Vitrine ContactsHub", "/landing"));
+$("showRdvQrBtn")?.addEventListener("click", () => openQrPopup("Prise de RDV / Test Niveau", "/rdv"));
+
+// Click on any tag badge in Contacts table to filter by that tag instantly
+$("contactsTbody")?.addEventListener("click", (e) => {
+  const el = e.target.closest(".clickable-tag");
+  if (!el) return;
+  const tg = el.dataset.tag || "";
+  if (!tg) return;
+  const sel = $("filterTag");
+  if (sel) {
+    if (!Array.from(sel.options).some((o) => o.value === tg)) {
+      const opt = document.createElement("option");
+      opt.value = tg;
+      opt.textContent = tg;
+      sel.appendChild(opt);
+    }
+    sel.value = tg;
+  }
+  state.page = 1;
+  loadContacts();
+  toast(`Filtre tag appliqué : ${tg}`, "info");
+});
+
 document.querySelectorAll(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => {
     closeMobileSidebar();
@@ -515,7 +594,13 @@ async function loadContacts() {
         .map((c) => {
           const initials = (c.full_name || c.email || "?").slice(0, 2).toUpperCase();
           const tagsHtml = c.tags
-            ? c.tags.split(",").map((t) => `<span class="badge badge-tag">${esc(t.trim())}</span>`).join("")
+            ? c.tags
+                .split(",")
+                .map((t) => {
+                  const clean = t.trim();
+                  return `<span class="badge badge-tag clickable-tag" data-tag="${esc(clean)}" style="cursor:pointer;" title="Cliquer pour filtrer par ce tag">${esc(clean)}</span>`;
+                })
+                .join("")
             : '<span style="color:#cbd5e1">—</span>';
           const webLink = c.website
             ? `<a href="${esc(safeUrl(c.website))}" target="_blank" rel="noopener noreferrer" style="font-size:11.5px;color:#4f46e5;text-decoration:none;">🌐</a>`

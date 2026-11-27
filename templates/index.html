@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="csrf-token" content="{{ csrf_token() }}" />
+  <meta name="saas-mode" content="{{ '1' if saas_mode else '0' }}" />
   <title>ContactsHub — Plateforme Complète de Centralisation Email</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -1897,8 +1898,10 @@ Virement</textarea></label>
               <p class="subtitle" id="adminLicenseSummary">Vérification de la licence de cette instance…</p>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <a class="btn btn-secondary btn-sm" href="/landing" target="_blank" rel="noopener noreferrer">🌐 Voir la page vitrine (/landing)</a>
-              <a class="btn btn-secondary btn-sm" href="/license" target="_blank" rel="noopener noreferrer">🔑 Page d'activation (/license)</a>
+              <a class="btn btn-secondary btn-sm" href="/landing" target="_blank" rel="noopener noreferrer">🌐 Page vitrine (/landing)</a>
+              <button type="button" class="btn btn-secondary btn-sm" id="showLandingQrBtn">📱 QR Vitrine</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="showRdvQrBtn">📱 QR RDV (/rdv)</button>
+              <a class="btn btn-secondary btn-sm" href="/license" target="_blank" rel="noopener noreferrer">🔑 Activation (/license)</a>
             </div>
           </div>
           <div class="form-grid">
@@ -1946,7 +1949,14 @@ Virement</textarea></label>
           <div class="form-grid">
             <label class="field"><span>Nom de l'entreprise / Espace</span><input type="text" id="wsName" class="input" placeholder="Ex: MSF'S English Learning Academy" /></label>
             <label class="field"><span>Sous-titre / Slogan</span><input type="text" id="wsTagline" class="input" placeholder="CRM, Inscriptions & Croissance" /></label>
-            <label class="field"><span>URL du Logo (optionnel)</span><input type="url" id="wsLogoUrl" class="input" placeholder="https://.../logo.png" /></label>
+            <label class="field">
+              <span>Logo de l'entreprise (URL ou upload direct PNG/JPG)</span>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <input type="text" id="wsLogoUrl" class="input" style="flex:1;" placeholder="https://.../logo.png ou utilisez Importer" />
+                <button type="button" class="btn btn-secondary btn-sm" id="uploadWsLogoBtn">📤 Importer</button>
+                <input type="file" id="wsLogoFileInput" class="hidden" accept=".png,.jpg,.jpeg,.webp" />
+              </div>
+            </label>
             <label class="field">
               <span>Couleur principale</span>
               <div style="display:flex;gap:8px;align-items:center;">

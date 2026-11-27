@@ -125,6 +125,7 @@ PUBLIC_PREFIXES = (
     "/healthz",
     "/landing",
     "/license",
+    "/uploads/",
     "/login",
     "/logout",
     "/static/",
@@ -375,9 +376,41 @@ def logout_page():
     return redirect("/login")
 
 
+@app.route("/uploads/<path:filename>", methods=["GET"])
+def public_uploaded_asset(filename: str):
+    uploads_dir = os.path.abspath(os.path.join(db.DATA_DIR, "uploads"))
+    safe_name = os.path.basename(filename)
+    full_path = os.path.abspath(os.path.join(uploads_dir, safe_name))
+    if not os.path.isfile(full_path) or os.path.commonpath([uploads_dir, full_path]) != uploads_dir:
+        return "Fichier introuvable.", 404
+    return send_file(full_path)
+
+
+@app.route("/api/admin/workspace/logo", methods=["POST"])
+def api_upload_workspace_logo():
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "Image logo requise (PNG, JPG ou WEBP)."}), 400
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp", ".svg"):
+        return jsonify({"error": "Format non supporté. Utilisez PNG, JPG ou WEBP."}), 400
+    raw = f.read()
+    if len(raw) > 3 * 1024 * 1024:
+        return jsonify({"error": "Logo trop volumineux (max 3 Mo)."}), 413
+    ws_id = _current_workspace_id()
+    uploads_dir = os.path.join(db.DATA_DIR, "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+    fname = f"logo_ws_{ws_id}{ext}"
+    with open(os.path.join(uploads_dir, fname), "wb") as out:
+        out.write(raw)
+    logo_url = f"/uploads/{fname}?v={int(time.time())}"
+    db.update_workspace(ws_id, {"logo_url": logo_url})
+    return jsonify({"ok": True, "logo_url": logo_url})
+
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", saas_mode=SAAS_MODE)
 
 
 # ---------------- STATS & CONTACTS ----------------
