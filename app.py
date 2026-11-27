@@ -24,6 +24,7 @@ import campaigns
 import connectors
 import db
 import enrichment
+import events_hub
 import executive_brief
 import gdrive_client
 import licensing
@@ -162,6 +163,8 @@ PUBLIC_PREFIXES = (
     "/quote/",
     "/api/quotes/",
     "/mon-espace/",
+    "/event/",
+    "/api/events/",
     "/f/",
     "/l/",
 )
@@ -177,6 +180,7 @@ CSRF_EXEMPT_PREFIXES = (
     "/f/",
     "/rdv",
     "/api/quotes/",
+    "/api/events/",
 )
 
 ADMIN_ONLY_PREFIXES = (
@@ -4027,6 +4031,94 @@ def api_sign_quote(qid: int):
 @app.route("/api/referrals/leaderboard", methods=["GET"])
 def api_referral_leaderboard():
     return jsonify({"items": premium_hub.get_referral_leaderboard(_active_ws_id())})
+
+
+# ---------------- VIP LAUNCH EVENT, QR TICKETING, CHECK-IN & 7-DAY TRIAL ----------------
+
+@app.route("/event/<slug>", methods=["GET"])
+def public_event_page(slug: str):
+    ev = events_hub.get_event_by_slug(slug)
+    if not ev:
+        return "Événement introuvable", 404
+    ref_code = (request.args.get("ref") or "").strip().upper()
+    return render_template("event_page.html", event=ev, ref_code=ref_code)
+
+
+@app.route("/api/events/<slug>/register", methods=["POST"])
+def api_event_register(slug: str):
+    if not _check_rate_limit("evt_reg", max_hits=20, window_sec=60):
+        return jsonify({"ok": False, "error": "Trop de tentatives."}), 429
+    data = request.get_json(force=True, silent=True) or {}
+    res = events_hub.register_attendee(slug, data)
+    if not res.get("ok"):
+        return jsonify(res), 400
+    return jsonify(res), 201
+
+
+@app.route("/event/ticket/<ticket_code>", methods=["GET"])
+def public_event_ticket(ticket_code: str):
+    data = events_hub.get_ticket_data(ticket_code)
+    if not data:
+        return "Billet VIP introuvable", 404
+    return render_template(
+        "event_ticket.html",
+        registration=data["registration"],
+        event=data["event"],
+        workspace=data["workspace"],
+        referral_code=data["referral_code"],
+        online_pay_url=data["online_pay_url"],
+        public_base_url=_public_base_url(int(data["workspace"].get("id") or 1)),
+    )
+
+
+@app.route("/event/<slug>/checkin", methods=["GET"])
+def event_checkin_page(slug: str):
+    ev = events_hub.get_event_by_slug(slug)
+    if not ev:
+        return "Événement introuvable", 404
+    return render_template("event_checkin.html", event=ev)
+
+
+@app.route("/api/events/checkin", methods=["POST"])
+def api_event_checkin():
+    data = request.get_json(force=True, silent=True) or {}
+    res = events_hub.checkin_ticket(
+        ticket_code=data.get("ticket_code") or "",
+        auto_confirm_payment=bool(data.get("auto_confirm_payment")),
+    )
+    if not res.get("ok"):
+        return jsonify(res), 404
+    return jsonify(res)
+
+
+@app.route("/api/events/current", methods=["GET"])
+def api_event_current():
+    ws_id = _active_ws_id()
+    ev = events_hub.ensure_default_event(ws_id)
+    regs = events_hub.list_registrations(ev["id"])
+    base = _public_base_url(ws_id)
+    return jsonify({
+        "event": ev,
+        "registrations": regs,
+        "public_url": f"{base}/event/{ev['slug']}",
+        "checkin_url": f"{base}/event/{ev['slug']}/checkin",
+    })
+
+
+@app.route("/api/events/<int:event_id>", methods=["POST"])
+def api_event_update(event_id: int):
+    data = request.get_json(force=True, silent=True) or {}
+    ev = events_hub.update_event(event_id, data)
+    return jsonify({"ok": True, "event": ev})
+
+
+@app.route("/api/events/registrations/<int:reg_id>/confirm-payment", methods=["POST"])
+def api_event_confirm_payment(reg_id: int):
+    data = request.get_json(force=True, silent=True) or {}
+    res = events_hub.confirm_registration_payment(reg_id, payment_ref=data.get("payment_ref") or "")
+    if not res.get("ok"):
+        return jsonify(res), 400
+    return jsonify(res)
 
 
 if __name__ == "__main__":

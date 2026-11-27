@@ -515,6 +515,51 @@ class ContactsHubTestSuite(unittest.TestCase):
             stats = premium_hub.get_referral_stats(c1)
             self.assertGreaterEqual(stats["referrals_count"], 1)
 
+    # --- 14. VIP Launch Event Ticketing, QR Check-In & 7-Day Trial Key ---
+    def test_16_event_vip_ticketing_checkin_trial(self):
+        import events_hub
+        ev = events_hub.ensure_default_event(1)
+        self.assertEqual(ev["price"], 10000.0)
+        self.assertIn("Adroukpapé", ev["location"])
+
+        r_page = self.client.get(f"/event/{ev['slug']}")
+        self.assertEqual(r_page.status_code, 200)
+        self.assertIn("Mawougna Yao Ossentini", r_page.get_data(as_text=True))
+
+        r_reg = self.client.post(
+            f"/api/events/{ev['slug']}/register",
+            json={
+                "full_name": "Invité Lomé VIP",
+                "phone": "+22891122334",
+                "email": "invite.lome@example.com",
+                "company": "Togo Tech SARL",
+                "tshirt_size": "XL",
+                "payment_method": "TMoney",
+            },
+        )
+        self.assertEqual(r_reg.status_code, 201)
+        tcode = r_reg.get_json()["ticket_code"]
+        reg_id = r_reg.get_json()["id"]
+
+        # Confirm payment -> generates 7-day trial license key
+        conf = events_hub.confirm_registration_payment(reg_id, payment_ref="TM-EVT-01")
+        self.assertTrue(conf["ok"])
+        self.assertTrue(conf["trial_license_key"].startswith("CHUB-"))
+
+        # Ticket page renders QR + trial key
+        r_tkt = self.client.get(f"/event/ticket/{tcode}")
+        self.assertEqual(r_tkt.status_code, 200)
+        self.assertIn(tcode, r_tkt.get_data(as_text=True))
+        self.assertIn("CHUB-", r_tkt.get_data(as_text=True))
+
+        # Check-in first time succeeds, second time flags duplicate
+        ci1 = events_hub.checkin_ticket(tcode)
+        self.assertTrue(ci1["ok"])
+        self.assertFalse(ci1["already_checked_in"])
+        ci2 = events_hub.checkin_ticket(tcode)
+        self.assertTrue(ci2["ok"])
+        self.assertTrue(ci2["already_checked_in"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1284,6 +1284,38 @@ Virement</textarea></label>
         </div>
 
         <!-- Existing Forms List -->
+        <div class="card" style="padding:18px;margin-bottom:16px;border-left:4px solid #d4af37;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <div>
+              <h3 style="margin:0;">🎟️ Événement VIP &amp; Billetterie QR Code (Lomé — 10 000 FCFA)</h3>
+              <div class="subtitle" style="margin-top:2px;">Gérez votre événement de lancement, les tailles de T-shirts, les validations de paiement et l'envoi automatique des clés 7 jours gratuits.</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <a class="btn btn-primary btn-sm" id="evtPublicLinkBtn" href="/event/lome-digital-ai-summit" target="_blank" rel="noopener noreferrer">🌐 Page Billetterie VIP</a>
+              <a class="btn btn-secondary btn-sm" id="evtCheckinLinkBtn" href="/event/lome-digital-ai-summit/checkin" target="_blank" rel="noopener noreferrer">📱 Scanner Check-In Jour J</a>
+              <button class="btn btn-ghost btn-sm" id="refreshVipEventBtn">↻</button>
+            </div>
+          </div>
+          <div class="form-grid" style="margin-bottom:10px;">
+            <label class="field"><span>Titre de l'événement</span><input type="text" id="evtTitleInput" class="input" /></label>
+            <label class="field"><span>Date</span><input type="date" id="evtDateInput" class="input" /></label>
+            <label class="field"><span>Heure</span><input type="text" id="evtTimeInput" class="input" placeholder="09:00" /></label>
+            <label class="field"><span>Lieu</span><input type="text" id="evtLocationInput" class="input" /></label>
+            <label class="field"><span>Prix ticket (FCFA)</span><input type="number" id="evtPriceInput" class="input" value="10000" /></label>
+            <label class="field"><span>Capacité (places)</span><input type="number" id="evtCapInput" class="input" value="100" /></label>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <button class="btn btn-primary btn-sm" id="saveVipEventBtn">💾 Enregistrer l'événement</button>
+            <div id="evtStatsBar" class="subtitle" style="font-size:12.5px;font-weight:600;"></div>
+          </div>
+          <div class="table-wrap" style="max-height:280px;overflow:auto;">
+            <table class="data-table">
+              <thead><tr><th>Billet</th><th>Invité VIP</th><th>T-Shirt</th><th>Paiement</th><th>Check-In</th><th>Action</th></tr></thead>
+              <tbody id="evtRegsTbody"><tr><td colspan="6" class="empty-cell">Chargement des réservations VIP…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="card table-card">
           <div class="browser-header">
             <strong>Mes formulaires d'inscription</strong>

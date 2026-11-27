@@ -921,6 +921,53 @@ def init_db() -> None:
             if col not in q_cols:
                 conn.execute(f"ALTER TABLE quotes ADD COLUMN {col} {ddl}")
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vip_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT UNIQUE NOT NULL,
+                title TEXT NOT NULL,
+                subtitle TEXT DEFAULT '',
+                event_date TEXT DEFAULT '',
+                event_time TEXT DEFAULT '09:00',
+                location TEXT DEFAULT '',
+                price REAL DEFAULT 10000,
+                currency TEXT DEFAULT 'FCFA',
+                capacity INTEGER DEFAULT 100,
+                speakers_json TEXT DEFAULT '[]',
+                perks_json TEXT DEFAULT '[]',
+                trial_days INTEGER DEFAULT 7,
+                workspace_id INTEGER DEFAULT 1,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS event_registrations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                ticket_code TEXT UNIQUE NOT NULL,
+                contact_id INTEGER,
+                full_name TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                email TEXT DEFAULT '',
+                company TEXT DEFAULT '',
+                tshirt_size TEXT DEFAULT 'L',
+                payment_method TEXT DEFAULT 'TMoney',
+                payment_ref TEXT DEFAULT '',
+                payment_status TEXT DEFAULT 'pending',
+                amount_paid REAL DEFAULT 0,
+                checked_in INTEGER DEFAULT 0,
+                checked_in_at TEXT DEFAULT '',
+                trial_license_key TEXT DEFAULT '',
+                referred_by TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_evt_reg_event ON event_registrations(event_id)")
+
         # Clean up legacy unresolved WhatsApp @lid ghost records (fake 14-15 digit numbers)
         conn.execute("DELETE FROM whatsapp_messages WHERE jid LIKE '%@lid' OR LENGTH(REPLACE(phone, '+', '')) >= 14")
         conn.execute("DELETE FROM whatsapp_contacts WHERE jid LIKE '%@lid' OR LENGTH(REPLACE(phone, '+', '')) >= 14")

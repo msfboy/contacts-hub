@@ -115,7 +115,7 @@ function switchTab(tab) {
   if (tab === "crm") { loadKanban(); loadTasks(); loadSegments(); loadWorkflows(); }
   if (tab === "conversion") { loadWaTemplates(); loadHotSignals(); loadTrackedLinks(); loadLeadForms(); initWaInbox(); loadWaAutopilot(); }
   else { stopWaPolling(); }
-  if (tab === "training-forms") loadTrainingForms();
+  if (tab === "training-forms") { loadTrainingForms(); loadVipEventAdmin(); }
   if (tab === "payments") { loadPayments(); loadQuotes(); loadPaymentGateway(); }
   if (tab === "booking") loadBookingHub();
   if (tab === "dashboard") { loadDashboard(); loadExecutiveBrief(); loadSalesLeaderboard(); loadGeoMap(); loadForecastAndAtRisk(); }
@@ -5742,3 +5742,87 @@ $("resetForecastBtn")?.addEventListener("click", loadForecastAndAtRisk);
     }
   });
 })();
+
+// ---------------- VIP LAUNCH EVENT ADMIN ----------------
+let _currentVipEventId = null;
+
+async function loadVipEventAdmin() {
+  const tbody = $("evtRegsTbody");
+  if (!tbody) return;
+  try {
+    const data = await api("/api/events/current");
+    const ev = data.event;
+    _currentVipEventId = ev.id;
+    if ($("evtTitleInput")) $("evtTitleInput").value = ev.title || "";
+    if ($("evtDateInput")) $("evtDateInput").value = ev.event_date || "";
+    if ($("evtTimeInput")) $("evtTimeInput").value = ev.event_time || "09:00";
+    if ($("evtLocationInput")) $("evtLocationInput").value = ev.location || "";
+    if ($("evtPriceInput")) $("evtPriceInput").value = ev.price || 10000;
+    if ($("evtCapInput")) $("evtCapInput").value = ev.capacity || 100;
+    if ($("evtPublicLinkBtn")) $("evtPublicLinkBtn").href = `/event/${ev.slug}`;
+    if ($("evtCheckinLinkBtn")) $("evtCheckinLinkBtn").href = `/event/${ev.slug}/checkin`;
+
+    const sizes = Object.entries(ev.tshirt_counts || {}).map(([k, v]) => `${k}:${v}`).join(" · ") || "aucun";
+    if ($("evtStatsBar")) {
+      $("evtStatsBar").textContent = `Inscrits : ${ev.registered_count}/${ev.capacity} · Payés : ${ev.paid_count} (${Math.round(ev.revenue || 0).toLocaleString("fr-FR")} FCFA) · Présents : ${ev.checked_in_count} · 👕 T-Shirts : ${sizes}`;
+    }
+
+    const regs = data.registrations || [];
+    if (!regs.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">Aucune réservation VIP pour le moment. Partagez votre lien Billetterie !</td></tr>';
+      return;
+    }
+    tbody.innerHTML = regs
+      .map((r) => `
+        <tr>
+          <td><a href="/event/ticket/${esc(r.ticket_code)}" target="_blank"><strong>${esc(r.ticket_code)}</strong></a></td>
+          <td><strong>${esc(r.full_name)}</strong><br><span class="subtitle" style="font-size:11.5px;">${esc(r.phone)} ${r.company ? "· " + esc(r.company) : ""}</span></td>
+          <td><span class="badge badge-st-contacted">👕 ${esc(r.tshirt_size)}</span></td>
+          <td>${r.payment_status === "paid" ? '<span class="badge badge-st-client">PAYÉ ✅</span>' : '<span class="badge badge-st-followup">EN ATTENTE</span>'}</td>
+          <td>${r.checked_in ? "✅ Présent" : "—"}</td>
+          <td>
+            ${r.payment_status !== "paid" ? `<button class="btn btn-primary btn-sm evt-confirm-pay-btn" data-id="${r.id}">💰 Valider + Clé 7j</button>` : '<span class="subtitle" style="font-size:11.5px;">🔑 Clé 7j envoyée</span>'}
+          </td>
+        </tr>
+      `)
+      .join("");
+    tbody.querySelectorAll(".evt-confirm-pay-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/events/registrations/${btn.dataset.id}/confirm-payment`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          toast("Paiement validé + Clé 7 jours gratuits générée et envoyée sur WhatsApp !", "success");
+          loadVipEventAdmin();
+        } catch (e) {
+          toast(e.message, "error");
+        }
+      });
+    });
+  } catch (_) {}
+}
+
+$("refreshVipEventBtn")?.addEventListener("click", loadVipEventAdmin);
+$("saveVipEventBtn")?.addEventListener("click", async () => {
+  if (!_currentVipEventId) return;
+  try {
+    await api(`/api/events/${_currentVipEventId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: $("evtTitleInput")?.value,
+        event_date: $("evtDateInput")?.value,
+        event_time: $("evtTimeInput")?.value,
+        location: $("evtLocationInput")?.value,
+        price: Number($("evtPriceInput")?.value || 10000),
+        capacity: Number($("evtCapInput")?.value || 100),
+      }),
+    });
+    toast("Paramètres de l'événement VIP enregistrés !", "success");
+    loadVipEventAdmin();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+});
