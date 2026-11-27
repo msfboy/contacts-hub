@@ -1484,11 +1484,17 @@ Virement</textarea></label>
           <div class="card upload-card">
             <div class="dropzone" id="dropzone">
               <div class="dropzone-icon">📁</div>
-              <h3>Glissez vos fichiers de contacts ici</h3>
+              <h3>Glissez vos fichiers ou scannez un dossier entier de votre PC</h3>
               <p>Formats supportés : CSV, TSV, Excel (.xlsx, .xls), vCard (.vcf), PDF (.pdf), JSON, Word (.docx), Texte (.txt, .eml)</p>
               <input type="file" id="fileInput" multiple hidden />
-              <button class="btn btn-primary" id="browseFilesBtn">Choisir des fichiers</button>
+              <input type="file" id="folderInput" webkitdirectory directory multiple hidden />
+              <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:8px;">
+                <button type="button" class="btn btn-primary" id="browseFolderBtn">📂 Scanner un dossier entier du PC (sous-dossiers inclus)</button>
+                <button type="button" class="btn btn-secondary" id="browseFilesBtn">📄 Choisir des fichiers</button>
+              </div>
+              <p style="font-size:12px;margin-top:10px;color:#475569;">Astuce : sélectionnez <strong>Bureau</strong>, <strong>Documents</strong> ou <strong>Téléchargements</strong> — ContactsHub filtre automatiquement les fichiers de contacts dans tous les sous-dossiers et ignore les autres fichiers.</p>
             </div>
+            <div id="folderScanSummary" class="info-box hidden" style="margin-top:12px;"></div>
             <div class="upload-footer">
               <input type="text" id="uploadTagInput" class="input" placeholder="Tag optionnel à appliquer aux contacts importés…" />
               <button class="btn btn-primary" id="startUploadBtn" disabled>Importer les fichiers choisis</button>

@@ -1687,39 +1687,88 @@ $("runWatchersNowBtn").addEventListener("click", async () => {
 // ---------------- DRAG & DROP UPLOAD ----------------
 
 const dropzone = $("dropzone");
-$("browseFilesBtn").addEventListener("click", () => $("fileInput").click());
-$("fileInput").addEventListener("change", (e) => setUploadFiles(e.target.files));
+const SUPPORTED_UPLOAD_EXTS = new Set([".csv", ".tsv", ".xlsx", ".xls", ".vcf", ".vcard", ".json", ".pdf", ".docx", ".txt", ".eml"]);
+
+$("browseFilesBtn")?.addEventListener("click", () => $("fileInput")?.click());
+$("browseFolderBtn")?.addEventListener("click", () => $("folderInput")?.click());
+$("fileInput")?.addEventListener("change", (e) => setUploadFiles(e.target.files, false));
+$("folderInput")?.addEventListener("change", (e) => setUploadFiles(e.target.files, true));
 dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("dragover"); });
 dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
 dropzone.addEventListener("drop", (e) => {
   e.preventDefault();
   dropzone.classList.remove("dragover");
-  setUploadFiles(e.dataTransfer.files);
+  setUploadFiles(e.dataTransfer.files, false);
 });
 
-function setUploadFiles(fileList) {
-  state.uploadFiles = [...fileList];
+function setUploadFiles(fileList, fromFolderScan = false) {
+  const all = [...fileList];
+  let chosen = all;
+  if (fromFolderScan) {
+    chosen = all.filter((f) => {
+      const rel = (f.webkitRelativePath || f.name || "").toLowerCase();
+      if (rel.includes("/node_modules/") || rel.includes("/.git/") || rel.includes("/__pycache__/") || rel.includes("/windows/")) {
+        return false;
+      }
+      if (f.size === 0 || f.size > 10 * 1024 * 1024) return false;
+      const dot = f.name.lastIndexOf(".");
+      const ext = dot >= 0 ? f.name.slice(dot).toLowerCase() : "";
+      return SUPPORTED_UPLOAD_EXTS.has(ext);
+    });
+    const box = $("folderScanSummary");
+    if (box) {
+      box.classList.remove("hidden");
+      box.textContent = chosen.length
+        ? `✅ Scan automatique terminé : ${chosen.length} fichier(s) de contacts détecté(s) dans tous les sous-dossiers (sur ${all.length} fichiers parcourus). Cliquez sur « Importer » pour tout centraliser et dédoublonner.`
+        : `Aucun fichier exploitable (CSV, Excel, PDF, vCard, Word, TXT) trouvé dans les ${all.length} fichiers de ce dossier.`;
+    }
+  } else {
+    $("folderScanSummary")?.classList.add("hidden");
+  }
+
+  state.uploadFiles = chosen;
   $("startUploadBtn").disabled = state.uploadFiles.length === 0;
+  $("startUploadBtn").textContent = state.uploadFiles.length
+    ? `Importer ${state.uploadFiles.length} fichier(s)`
+    : "Importer les fichiers choisis";
   $("uploadFileList").innerHTML = state.uploadFiles
-    .map((f) => `<li><span>📄 ${esc(f.name)}</span><span>${fmtSize(f.size)}</span></li>`)
-    .join("");
+    .slice(0, 80)
+    .map((f) => `<li><span>📄 ${esc(f.webkitRelativePath || f.name)}</span><span>${fmtSize(f.size)}</span></li>`)
+    .join("") + (state.uploadFiles.length > 80 ? `<li><span>… et ${state.uploadFiles.length - 80} autre(s) fichier(s)</span><span></span></li>` : "");
 }
 
 $("startUploadBtn").addEventListener("click", async () => {
   if (!state.uploadFiles.length) return;
-  const fd = new FormData();
-  state.uploadFiles.forEach((f) => fd.append("files", f));
-  fd.append("tag", $("uploadTagInput").value.trim());
+  const tag = $("uploadTagInput").value.trim();
+  const batchSize = 5;
+  const totalBatches = Math.ceil(state.uploadFiles.length / batchSize);
+  let totalInserted = 0;
+  let totalUpdated = 0;
+  let totalErrors = 0;
+
   $("startUploadBtn").disabled = true;
-  $("startUploadBtn").textContent = "Importation…";
   try {
-    const res = await api("/api/upload", { method: "POST", body: fd });
-    const inserted = res.results.reduce((s, r) => s + r.inserted, 0);
-    const updated = res.results.reduce((s, r) => s + r.updated, 0);
-    toast(`Upload terminé : +${inserted} nouveaux, ${updated} mis à jour.`, "success");
+    for (let i = 0; i < state.uploadFiles.length; i += batchSize) {
+      const batch = state.uploadFiles.slice(i, i + batchSize);
+      const batchNum = Math.floor(i / batchSize) + 1;
+      $("startUploadBtn").textContent = totalBatches > 1 ? `Importation lot ${batchNum}/${totalBatches}…` : "Importation…";
+      const fd = new FormData();
+      batch.forEach((f) => fd.append("files", f));
+      fd.append("tag", tag);
+      const res = await api("/api/upload", { method: "POST", body: fd });
+      totalInserted += (res.results || []).reduce((s, r) => s + (r.inserted || 0), 0);
+      totalUpdated += (res.results || []).reduce((s, r) => s + (r.updated || 0), 0);
+      totalErrors += (res.errors || []).length;
+    }
+    toast(
+      `Import terminé : +${totalInserted} nouveau(x), ${totalUpdated} mis à jour` + (totalErrors ? ` (${totalErrors} ignoré(s))` : "") + ".",
+      "success"
+    );
     state.uploadFiles = [];
     $("uploadFileList").innerHTML = "";
-    $("fileInput").value = "";
+    $("folderScanSummary")?.classList.add("hidden");
+    if ($("fileInput")) $("fileInput").value = "";
+    if ($("folderInput")) $("folderInput").value = "";
     refreshAll();
   } catch (e) {
     toast(e.message, "error");
